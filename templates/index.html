@@ -3,24 +3,38 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Code Analyzer</title>
-    <link rel="stylesheet" href="styles.css">
-    <script src="script.js" defer></script>
+    <title>Analysis Results</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        #results { margin-top: 20px; }
+        .status-message { font-weight: bold; }
+        .error { color: red; }
+    </style>
 </head>
 <body>
-    <header>
-        <h1>Code Analyzer Interface</h1>
-    </header>
-    <main>
-        <form id="analyze-form">
-            <textarea id="code-input" placeholder="Enter your code here..." required></textarea>
-            <button type="submit">Analyze Code</button>
-        </form>
-        <div id="results">
-            <h2>Analysis Results:</h2>
-            <pre id="analysis-output"></pre>
-        </div>
-        <div id="error-message" style="color: red;"></div>
-    </main>
+    <h1>Analysis Input</h1>
+    <form id="analysis-form">
+        <input type="text" id="input-box" placeholder="Enter your analysis data here..." required>
+        <button type="submit">Submit</button>
+    </form>
+    <div id="results"></div>
+    <script>
+        document.getElementById('analysis-form').addEventListener('submit', function(event) {
+            event.preventDefault();
+            const inputData = document.getElementById('input-box').value;
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '';
+            
+            // Simulating analysis results and error handling
+            if (!inputData) {
+                resultsDiv.innerHTML = '<div class="status-message error">Error: Input cannot be empty.</div>';
+                return;
+            }
+            
+            // Simulate a successful analysis result
+            const analysisResult = `Analysis Result: Processed - ${inputData}`;
+            resultsDiv.innerHTML = `<div class="status-message">Success: ${analysisResult}</div>`;
+        });
+    </script>
 </body>
 </html>
