@@ -63,7 +63,7 @@
                 loadingIndicator.style.display = 'none';
                 resultsDiv.style.display = 'block';
                 
-                statusDiv.innerHTML = '<p class="' + (data.clean ? 'success' : 'error') + '">Status: ' + (data.clean ? 'Clean ✅' : 'Issues Found ⚠️') + '</p>';
+                statusDiv.innerHTML = '<p class="' + (data.clean ? 'success' : 'error') + '">Status: ' + (data.clean ? 'Clean ✅' : 'Issues Found ⚠️') + '</p>'; 
                 issuesDiv.innerHTML = '<p>Issues Count: ' + data.issues_count + '</p>';
                 reportDiv.innerHTML = '<p><strong>Report:</strong><br>' + data.report + '</p>';
             })
