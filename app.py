@@ -1,13 +1,1 @@
-from flask import Flask, render_template  
-from DissonanceDetector import DissonanceDetector  
-
-app = Flask(__name__)  
-
-@app.route('/')  
-def index():  
-    detector = DissonanceDetector()  
-    # Example use of the detector, update with your logic  
-    return render_template('index.html')  
-
-if __name__ == '__main__':  
-    app.run(debug=True)
+from flask import Flask, render_template, request, jsonify\nfrom DissonanceDetector import analyze_code\n\napp = Flask(__name__)\n\n@app.route('/')\ndef index():\n    return render_template('index.html')\n\n@app.route('/api/analyze', methods=['POST'])\ndef analyze():\n    code = request.json.get('code')\n    result = analyze_code(code)\n    return jsonify(result)\n\n@app.route('/api/health', methods=['GET'])\ndef health():\n    return jsonify({'status': 'healthy'})\n\nif __name__ == '__main__':\n    app.run(debug=True)
