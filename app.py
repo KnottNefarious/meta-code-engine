@@ -1,5 +1,7 @@
+import os
+
 from flask import Flask, render_template, request, jsonify
-from meta_code.dissonance import DissonanceDetector
+from meta_code.meta_engine import MetaCodeEngine
 
 app = Flask(__name__)
 
@@ -14,10 +16,37 @@ def analyze():
         code = data.get('code', '')
         if not code.strip():
             return jsonify({'success': False, 'error': 'No code'}), 400
-        detector = DissonanceDetector(code)
-        detector.parse()
-        detector.analyze()
-        return jsonify({'success': True, 'clean': not detector.has_issues(), 'issues_count': len(detector.get_issues()), 'report': detector.report()})
+        engine = MetaCodeEngine()
+        report = engine.orchestrate(code)
+        issues = report.issues
+        complexity = report.complexity_metrics
+        structure = report.structural_analysis
+        resolutions = report.resolution_predictions
+        return jsonify({
+            'success': True,
+            'clean': len(issues) == 0,
+            'issues_count': len(issues),
+            'report': '\n'.join(issues),
+            'complexity': {
+                'raw_size': complexity.get('raw_size', 0),
+                'compressed_size': complexity.get('compressed_size', 0),
+                'ratio': complexity.get('ratio', 0.0),
+                'patterns': complexity.get('patterns', {}),
+            },
+            'structure': {
+                'depth': structure.get('depth', 0),
+                'branching_factor': structure.get('branching_factor', 0.0),
+                'node_type_distribution': structure.get('node_type_distribution', {}),
+            },
+            'resolutions': [
+                {
+                    'issue': r.get('issue', ''),
+                    'suggestion': r.get('suggestion', ''),
+                    'convergence': r.get('convergence', False),
+                }
+                for r in resolutions
+            ],
+        })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -26,4 +55,4 @@ def health():
     return jsonify({'status': 'ok'})
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=os.environ.get('FLASK_DEBUG', 'false').lower() == 'true')
