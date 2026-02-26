@@ -1,1 +1,32 @@
-<!DOCTYPE html>\n<html lang="en">\n<head>\n    <meta charset="UTF-8">\n    <meta name="viewport" content="width=device-width, initial-scale=1.0">\n    <title>Meta-Code Engine</title>\n    <link rel="stylesheet" href="styles.css">\n</head>\n<body>\n    <header>\n        <h1>Welcome to the Meta-Code Engine</h1>\n    </header>\n    <main>\n        <section>\n            <h2>About</h2>\n            <p>This is the web interface for the Meta-Code Engine.</p>\n        </section>\n        <section>\n            <h2>Features</h2>\n            <ul>\n                <li>Code Generation</li>\n                <li>Version Control</li>\n                <li>Real-time Collaboration</li>\n            </ul>\n        </section>\n    </main>\n    <footer>\n        <p>&copy; 2026 Meta-Code Engine. All rights reserved.</p>\n    </footer>\n</body>\n</html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Code Analyzer</title>
+    <script>
+        async function analyzeCode() {
+            const code = document.getElementById('code-input').value;
+            try {
+                const response = await fetch('/api/analyze', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ code })
+                });
+                const result = await response.json();
+                console.log('Analysis Result:', result);
+                // Handle the result accordingly
+            } catch (error) {
+                console.error('Error analyzing code:', error);
+            }
+        }
+    </script>
+</head>
+<body>
+    <h1>Code Analyzer Interface</h1>
+    <textarea id="code-input" rows="10" cols="50" placeholder="Enter your code here..."></textarea><br>
+    <button onclick="analyzeCode()">Analyze</button>
+</body>
+</html>
