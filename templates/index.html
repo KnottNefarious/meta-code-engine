@@ -5,20 +5,24 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Code Analysis</title>
     <style>
-        body { font-family: Arial, sans-serif; }
-        #results { margin-top: 20px; }
-        .loading { display: none; }
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        textarea { width: 100%; padding: 10px; font-size: 14px; }
+        button { padding: 10px 20px; font-size: 16px; cursor: pointer; }
+        #results { margin-top: 20px; padding: 15px; border: 1px solid #ddd; }
+        .loading { display: none; color: blue; font-weight: bold; }
+        .error { color: red; font-weight: bold; }
+        .success { color: green; }
     </style>
 </head>
 <body>
     <h1>Code Analysis Tool</h1>
-    <textarea id="codeInput" rows="10" cols="50" placeholder="Enter your code here..."></textarea><br>
+    <textarea id="codeInput" rows="10" placeholder="Enter your code here..."></textarea><br><br>
     <button id="analyzeBtn">Analyze</button>
-    <div class="loading" id="loadingIndicator">Loading...</div>
-    <div id="results">
+    <div class="loading" id="loadingIndicator">⏳ Loading...</div>
+    <div id="results" style="display:none;">
         <h2>Analysis Results</h2>
         <div id="status"></div>
-        <div id="issuesCount"></div>
+        <div id="issues_count"></div>
         <div id="reportText"></div>
     </div>
 
@@ -26,14 +30,21 @@
         document.getElementById('analyzeBtn').addEventListener('click', function() {
             const codeInput = document.getElementById('codeInput').value;
             const statusDiv = document.getElementById('status');
-            const issuesDiv = document.getElementById('issuesCount');
+            const issuesDiv = document.getElementById('issues_count');
             const reportDiv = document.getElementById('reportText');
             const loadingIndicator = document.getElementById('loadingIndicator');
+            const resultsDiv = document.getElementById('results');
+
+            if (!codeInput.trim()) {
+                alert('Please enter some code!');
+                return;
+            }
 
             statusDiv.innerHTML = '';
             issuesDiv.innerHTML = '';
             reportDiv.innerHTML = '';
             loadingIndicator.style.display = 'block';
+            resultsDiv.style.display = 'none';
 
             fetch('/api/analyze', {
                 method: 'POST',
@@ -41,20 +52,26 @@
                 body: JSON.stringify({ code: codeInput })
             })
             .then(response => {
+                console.log('Response status:', response.status);
                 if (!response.ok) {
-                    throw new Error('Network response was not ok');
+                    throw new Error('Network response was not ok: ' + response.status);
                 }
                 return response.json();
             })
             .then(data => {
+                console.log('Received data:', data);
                 loadingIndicator.style.display = 'none';
-                statusDiv.innerHTML = 'Clean Status: ' + (data.clean ? 'Clean' : 'Issues found');
-                issuesDiv.innerHTML = 'Issues Count: ' + data.issuesCount;
-                reportDiv.innerHTML = 'Report: ' + data.report;
+                resultsDiv.style.display = 'block';
+                
+                statusDiv.innerHTML = '<p class="' + (data.clean ? 'success' : 'error') + '">Status: ' + (data.clean ? 'Clean ✅' : 'Issues Found ⚠️') + '</p>';
+                issuesDiv.innerHTML = '<p>Issues Count: ' + data.issues_count + '</p>';
+                reportDiv.innerHTML = '<p><strong>Report:</strong><br>' + data.report + '</p>';
             })
             .catch(error => {
+                console.error('Error:', error);
                 loadingIndicator.style.display = 'none';
-                statusDiv.innerHTML = 'Error: ' + error.message;
+                resultsDiv.style.display = 'block';
+                statusDiv.innerHTML = '<p class="error">Error: ' + error.message + '</p>';
             });
         });
     </script>
