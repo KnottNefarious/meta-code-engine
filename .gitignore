@@ -1,10 +1,33 @@
+# Python bytecode
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
-.pytest_cache/
-*.egg-info/
-dist/
-build/
-.env
+*$py.class
+
+# Virtual environments
 venv/
+env/
+.venv/
+.env
+
+# IDE/Editor files
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Distribution/packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Flask
+instance/
+
+# Logs
+*.log
