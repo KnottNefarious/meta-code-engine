@@ -3,37 +3,59 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Analysis Results</title>
+    <title>Code Analysis</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
+        body { font-family: Arial, sans-serif; }
         #results { margin-top: 20px; }
-        .status-message { font-weight: bold; }
-        .error { color: red; }
+        .loading { display: none; }
     </style>
 </head>
 <body>
-    <h1>Analysis Input</h1>
-    <form id="analysis-form">
-        <input type="text" id="input-box" placeholder="Enter your analysis data here..." required>
-        <button type="submit">Submit</button>
-    </form>
-    <div id="results"></div>
+    <h1>Code Analysis Tool</h1>
+    <textarea id="codeInput" rows="10" cols="50" placeholder="Enter your code here..."></textarea><br>
+    <button id="analyzeBtn">Analyze</button>
+    <div class="loading" id="loadingIndicator">Loading...</div>
+    <div id="results">
+        <h2>Analysis Results</h2>
+        <div id="status"></div>
+        <div id="issuesCount"></div>
+        <div id="reportText"></div>
+    </div>
+
     <script>
-        document.getElementById('analysis-form').addEventListener('submit', function(event) {
-            event.preventDefault();
-            const inputData = document.getElementById('input-box').value;
-            const resultsDiv = document.getElementById('results');
-            resultsDiv.innerHTML = '';
-            
-            // Simulating analysis results and error handling
-            if (!inputData) {
-                resultsDiv.innerHTML = '<div class="status-message error">Error: Input cannot be empty.</div>';
-                return;
-            }
-            
-            // Simulate a successful analysis result
-            const analysisResult = `Analysis Result: Processed - ${inputData}`;
-            resultsDiv.innerHTML = `<div class="status-message">Success: ${analysisResult}</div>`;
+        document.getElementById('analyzeBtn').addEventListener('click', function() {
+            const codeInput = document.getElementById('codeInput').value;
+            const statusDiv = document.getElementById('status');
+            const issuesDiv = document.getElementById('issuesCount');
+            const reportDiv = document.getElementById('reportText');
+            const loadingIndicator = document.getElementById('loadingIndicator');
+
+            statusDiv.innerHTML = '';
+            issuesDiv.innerHTML = '';
+            reportDiv.innerHTML = '';
+            loadingIndicator.style.display = 'block';
+
+            fetch('/api/analyze', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ code: codeInput })
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.json();
+            })
+            .then(data => {
+                loadingIndicator.style.display = 'none';
+                statusDiv.innerHTML = 'Clean Status: ' + (data.clean ? 'Clean' : 'Issues found');
+                issuesDiv.innerHTML = 'Issues Count: ' + data.issuesCount;
+                reportDiv.innerHTML = 'Report: ' + data.report;
+            })
+            .catch(error => {
+                loadingIndicator.style.display = 'none';
+                statusDiv.innerHTML = 'Error: ' + error.message;
+            });
         });
     </script>
 </body>
