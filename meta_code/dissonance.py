@@ -3,6 +3,14 @@ import ast
 class SemanticAnalyzer:
     def __init__(self):
         self.issues = []
+        self._scope_refs = []
+
+    def _collect_refs(self, node):
+        """Collect all names referenced (Load context) in node's subtree."""
+        return {
+            n.id for n in ast.walk(node)
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+        }
 
     def visit(self, node):
         method_name = 'visit_' + node.__class__.__name__
@@ -13,16 +21,36 @@ class SemanticAnalyzer:
         for child in ast.iter_child_nodes(node):
             self.visit(child)
 
+    def _enter_scope(self, node):
+        self._scope_refs.append(self._collect_refs(node))
+        self.generic_visit(node)
+        self._scope_refs.pop()
+
+    def visit_Module(self, node):
+        self._enter_scope(node)
+
+    def visit_FunctionDef(self, node):
+        self._enter_scope(node)
+
+    def visit_AsyncFunctionDef(self, node):
+        self._enter_scope(node)
+
+    def visit_ClassDef(self, node):
+        self._enter_scope(node)
+
     def visit_Assign(self, node):
-        # Logic to detect unused variables
+        # Logic to detect unused variables - only flag if never referenced in current scope
+        current_refs = self._scope_refs[-1] if self._scope_refs else set()
         for target in node.targets:
             if isinstance(target, ast.Name):
-                self.issues.append(f"Unused variable: {target.id} in assignment.")
+                if target.id not in current_refs:
+                    self.issues.append(f"Unused variable: {target.id} in assignment.")
 
     def visit_If(self, node):
         # Logic to detect unreachable code
         if isinstance(node.test, ast.Constant) and not node.test.value:
             self.issues.append("Unreachable code detected in if statement.")
+        self.generic_visit(node)
 
     def check_consistency(self):
         return len(self.issues) == 0
