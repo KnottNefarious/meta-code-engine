@@ -3,30 +3,63 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Code Analyzer</title>
-    <script>
-        async function analyzeCode() {
-            const code = document.getElementById('code-input').value;
-            try {
-                const response = await fetch('/api/analyze', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ code })
-                });
-                const result = await response.json();
-                console.log('Analysis Result:', result);
-                // Handle the result accordingly
-            } catch (error) {
-                console.error('Error analyzing code:', error);
-            }
+    <title>Analysis Results</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            padding: 20px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            background-color: #f9f9f9;
         }
-    </script>
+        h1 {
+            color: #333;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #007BFF;
+            border-radius: 5px;
+            background-color: #e9f7ff;
+        }
+        .error {
+            color: red;
+            font-weight: bold;
+        }
+    </style>
 </head>
 <body>
-    <h1>Code Analyzer Interface</h1>
-    <textarea id="code-input" rows="10" cols="50" placeholder="Enter your code here..."></textarea><br>
-    <button onclick="analyzeCode()">Analyze</button>
+    <h1>Analysis Results</h1>
+    <div class="result">
+        <h2>Analysis Data</h2>
+        <!-- Place analysis results here -->
+        <p id="results">Loading analysis results...</p>
+    </div>
+    <div class="error" id="error" style="display:none;"></div>
+
+    <script>
+        // Example of displaying results or errors
+        function displayResults(data) {
+            document.getElementById('results').innerText = JSON.stringify(data, null, 2);
+        }
+
+        function displayError(message) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.innerText = message;
+            errorDiv.style.display = 'block';
+        }
+
+        // Fetch analysis results (mockup)
+        fetch('/api/analysis-results')
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Failed to fetch analysis results.');
+                }
+                return response.json();
+            })
+            .then(displayResults)
+            .catch(err => displayError(err.message));
+    </script>
 </body>
 </html>
