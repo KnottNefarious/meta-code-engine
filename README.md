@@ -1,51 +1,63 @@
-# Meta-Code Documentation
+# Meta-Code Engine
 
-## Overview
-The Meta-Code is a formal system designed to abstract and generalize various programming paradigms, acting as a backbone for software development.
+A Python semantic code analyzer with Flask web interface.
 
-## Infinity × Fugue Framework
-The Infinity × Fugue framework is built on the principles of the Meta-Code, providing an extensible way to create versatile applications.
+## Quick Start
 
-### Key Features:
-- **Scalability**: Easily scale your applications with built-in modularity.
-- **Flexibility**: Tailor the architecture to meet specific project requirements.
-
-## Installation Instructions
-To install the Meta-Code environment, follow these steps:
-
-1. **Clone the Repository**:
-   ```bash
-   git clone https://github.com/KnottNefarious/meta-code-engine.git
-   cd meta-code-engine
-   ```
-
-2. **Install Dependencies**:
-   ```bash
-   npm install
-   ```
-
-3. **Run the Application**:
-   ```bash
-   npm start
-   ```
-
-## Usage Examples
-
-### Example 1: Basic Setup
-```javascript
-const { MetaCode } = require('meta-code-engine');
-
-const metaApp = new MetaCode();
-metaApp.init();
+### Clone the repository
+```bash
+git clone https://github.com/KnottNefarious/meta-code-engine.git
+cd meta-code-engine
 ```
 
-### Example 2: Utilizing Infinity × Fugue
-```javascript
-const { InfinityFugue } = require('meta-code-engine');
-
-const fugueApp = new InfinityFugue();
-fugueApp.createModule('exampleModule');
+### Install Flask
+```bash
+pip install flask
 ```
 
-## Conclusion
-Explore the vast possibilities with the Meta-Code and Infinity × Fugue framework to enhance your development experience!
+### Run the application
+```bash
+python app.py
+```
+
+### Access the analyzer
+- **Computer**: Visit `http://localhost:5000`
+- **Phone (same WiFi)**: Visit `http://YOUR_IP_ADDRESS:5000`
+
+## Finding Your IP Address
+
+**Windows:**
+1. Open Command Prompt
+2. Type: `ipconfig`
+3. Look for "IPv4 Address" (example: 192.168.1.100)
+
+**Mac/Linux:**
+1. Open Terminal
+2. Type: `ifconfig`
+3. Look for "inet" (example: 192.168.1.100)
+
+## Features
+
+- ✨ Real-time code analysis
+- ✨ Detects unused variables
+- ✨ Finds unreachable code
+- ✨ Mobile-friendly interface
+- ✨ Works on any device with a browser
+
+## How to Use
+
+1. Paste Python code into the text area
+2. Click the "Analyze" button
+3. Get instant semantic analysis results
+
+Results display:
+- **Clean** - No issues found
+- **Issues** - List of problems detected
+- **Error** - Invalid Python syntax
+
+## Project Structure
+
+- `app.py` - Flask web server
+- `templates/index.html` - Web interface
+- `meta_code/dissonance.py` - Code analyzer
+- `requirements.txt` - Python dependencies
