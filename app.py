@@ -1,13 +1,16 @@
-from flask import Flask, request, jsonify
+from flask import Flask, render_template
+from DissonanceDetector import SomeFunction
 
 app = Flask(__name__)
 
-@app.route('/dissonance', methods=['POST'])
-def detect_dissonance():
-    data = request.get_json()
-    # Implement dissonance detection logic here
-    result = "Dissonance detected"  # Placeholder for actual detection logic
-    return jsonify({'result': result})
+@app.route('/')
+def home():
+    return render_template('home.html')
+
+@app.route('/api/analyze', methods=['POST'])
+def analyze():
+    # Logic to analyze data
+    return {'status': 'success'}
 
 if __name__ == '__main__':
     app.run(debug=True)
