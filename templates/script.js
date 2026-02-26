@@ -1,36 +1,34 @@
-// script.js
+// Update to handle API response properly
 
-// Function to handle form submission
-function handleFormSubmit(event) {
-    event.preventDefault(); // Prevent the default form submission
+async function displayAnalysisResults(apiResponse) {
+    const resultsContainer = document.getElementById('results');
 
-    // Get the code from the form input
-    const code = document.getElementById('codeInput').value;
+    // Clear existing results
+    resultsContainer.innerHTML = '';
 
-    // Send the code to the /api/analyze endpoint
-    fetch('/api/analyze', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ code })
-    })
-    .then(response => response.json())
-    .then(data => {
-        // Display the analysis results
-        const resultContainer = document.getElementById('results');
-        if (data.success) {
-            resultContainer.innerHTML = '<h3>Analysis Results</h3>' + JSON.stringify(data.result);
-        } else {
-            resultContainer.innerHTML = '<h3>Error</h3>' + data.message;
+    try {
+        if (!apiResponse || !apiResponse.issues) {
+            throw new Error('Invalid API response');
         }
-    })
-    .catch(error => {
-        // Handle any errors
-        const resultContainer = document.getElementById('results');
-        resultContainer.innerHTML = '<h3>Error</h3>' + error.message;
-    });
-}
 
-// Add the event listener to the form
-document.getElementById('myForm').addEventListener('submit', handleFormSubmit);
+        const issues = apiResponse.issues;
+        const status = apiResponse.status;
+
+        // Display status
+        const statusElement = document.createElement('div');
+        statusElement.innerHTML = `<h2>Status: ${status}</h2>`;
+        resultsContainer.appendChild(statusElement);
+
+        // Display issues
+        issues.forEach(issue => {
+            const issueElement = document.createElement('div');
+            issueElement.innerHTML = `<p>Issue: ${issue.description}</p>`;
+            resultsContainer.appendChild(issueElement);
+        });
+    } catch (error) {
+        // Handle errors
+        const errorElement = document.createElement('div');
+        errorElement.innerHTML = `<p>Error: ${error.message}</p>`;
+        resultsContainer.appendChild(errorElement);
+    }
+}
