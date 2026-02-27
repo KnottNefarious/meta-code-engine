@@ -56,10 +56,14 @@ def analyze_repo():
             return jsonify({'success': False, 'error': 'Invalid repository format'}), 400
 
         user, repo = parts[0], parts[1]
+token = os.environ.get("GITHUB_TOKEN")
 
-        headers = {
-            "User-Agent": "MetaCodeEngine-Scanner"
-        }
+headers = {
+    "User-Agent": "MetaCodeEngine-Scanner",
+}
+
+if token:
+    headers["Authorization"] = f"token {token}"
 
         # ---- 1) Ask GitHub for default branch ----
         try:
