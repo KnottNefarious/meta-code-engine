@@ -3,6 +3,7 @@ import ast
 DANGEROUS_CALLS = {"eval", "exec"}
 OS_COMMAND_METHODS = {"system", "popen"}
 SUBPROCESS_METHODS = {"Popen", "run", "call"}
+SQL_METHODS = {"execute", "executemany"}
 REQUEST_CONTAINERS = {"args", "form", "json", "values", "headers", "cookies", "data"}
 
 
@@ -42,7 +43,6 @@ class SymbolicAnalyzer:
         for stmt in tree.body:
             self.execute(stmt)
 
-        # simulate web entrypoints
         for func in self.functions.values():
             saved = self.symbols
             self.symbols = self.symbols.copy()
@@ -103,11 +103,8 @@ class SymbolicAnalyzer:
                 saved_return = self.return_value
 
                 local = {}
-
-                # bind self
                 local["self"] = obj
 
-                # bind parameters AFTER self
                 params = item.args.args[1:]
                 for param, arg in zip(params, args):
                     val = self.evaluate(arg)
@@ -162,14 +159,14 @@ class SymbolicAnalyzer:
 
                 obj = self.evaluate(node.func.value)
 
-                # METHOD CALL
+                # class method
                 if isinstance(obj, SymbolicValue) and obj.class_name:
                     ret = self.execute_method(obj, node.func.attr, node.args)
                     if ret:
                         return ret
 
-                # subprocess(shell=True)
                 method = node.func.attr
+
                 shell_true = any(
                     kw.arg == "shell" and isinstance(kw.value, ast.Constant) and kw.value.value is True
                     for kw in node.keywords
@@ -178,6 +175,7 @@ class SymbolicAnalyzer:
                 for arg in node.args:
                     val = self.evaluate(arg)
 
+                    # command injection
                     if isinstance(val, SymbolicValue) and val.tainted and method in OS_COMMAND_METHODS:
                         trace = " → ".join(val.path + [method])
                         self.issues.append(f"Command execution path: {trace}")
@@ -185,6 +183,11 @@ class SymbolicAnalyzer:
                     if isinstance(val, SymbolicValue) and val.tainted and method in SUBPROCESS_METHODS and shell_true:
                         trace = " → ".join(val.path + ["subprocess(shell=True)"])
                         self.issues.append(f"Shell injection path: {trace}")
+
+                    # SQL injection
+                    if isinstance(val, SymbolicValue) and val.tainted and method in SQL_METHODS:
+                        trace = " → ".join(val.path + ["SQL execute"])
+                        self.issues.append(f"SQL injection path: {trace}")
 
                 return None
 
