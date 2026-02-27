@@ -2,7 +2,8 @@ import ast
 
 # Dangerous execution sinks
 DANGEROUS_CALLS = {"eval", "exec"}
-DANGEROUS_METHODS = {"system", "popen", "Popen", "run", "call"}
+OS_COMMAND_METHODS = {"system", "popen"}
+SUBPROCESS_METHODS = {"Popen", "run", "call"}
 
 
 # ---------------- SYMBOLIC VALUE ----------------
@@ -10,13 +11,10 @@ class SymbolicValue:
     def __init__(self, name, tainted=False, path=None):
         self.name = name
         self.tainted = tainted
-        self.attributes = {}
         self.path = path or [name]
 
     def copy(self):
-        new = SymbolicValue(self.name, self.tainted, list(self.path))
-        new.attributes = dict(self.attributes)
-        return new
+        return SymbolicValue(self.name, self.tainted, list(self.path))
 
     def merge(self, other):
         merged = SymbolicValue(self.name, self.tainted or other.tainted, list(self.path))
@@ -38,26 +36,25 @@ class SymbolicAnalyzer:
 
     def new_symbol(self, source="input"):
         self.symbolic_counter += 1
-        return SymbolicValue(f"{source}_{self.symbolic_counter}", tainted=True, path=[source])
+        return SymbolicValue(f"{source}_{self.symbolic_counter}", True, [source])
 
-    # ---------------- RUN PROGRAM ----------------
+    # ---------------- RUN ----------------
     def run(self, tree):
         # collect definitions
         for stmt in tree.body:
             self.execute(stmt)
 
-        # simulate web entrypoints
+        # simulate web entry points
         for func in self.functions.values():
-            saved_symbols = self.symbols
+            saved = self.symbols
             self.symbols = self.symbols.copy()
 
             for arg in func.args.args:
                 self.symbols[arg.arg] = self.new_symbol("param")
 
             self.execute_block(func.body)
-            self.symbols = saved_symbols
+            self.symbols = saved
 
-    # ---------------- BLOCK ----------------
     def execute_block(self, statements):
         for stmt in statements:
             if self.execute(stmt) == "return":
@@ -84,7 +81,6 @@ class SymbolicAnalyzer:
 
         if isinstance(node, ast.Expr):
             self.evaluate(node.value)
-            return
 
     # ---------------- EXPRESSIONS ----------------
     def evaluate(self, node):
@@ -96,11 +92,11 @@ class SymbolicAnalyzer:
         if isinstance(node, ast.Constant):
             return node.value
 
-        # variables
+        # variable lookup
         if isinstance(node, ast.Name):
             return self.symbols.get(node.id, None)
 
-        # Flask request sources
+        # Flask request.* is attacker input
         if isinstance(node, ast.Attribute):
             if isinstance(node.value, ast.Name) and node.value.id == "request":
                 return self.new_symbol("request")
@@ -116,34 +112,36 @@ class SymbolicAnalyzer:
             # request.args.get(...)
             if isinstance(node.func, ast.Attribute):
 
+                # request.args.get(...)
                 if isinstance(node.func.value, ast.Attribute):
                     if isinstance(node.func.value.value, ast.Name) and node.func.value.value.id == "request":
                         sym = self.new_symbol("request")
                         sym.add_step(node.func.attr)
                         return sym
 
+                # propagate taint through methods
                 obj = self.evaluate(node.func.value)
                 if isinstance(obj, SymbolicValue) and obj.tainted:
                     val = obj.copy()
                     val.add_step(node.func.attr)
                     return val
 
-            # user-defined function call
+            # user-defined function
             if isinstance(node.func, ast.Name) and node.func.id in self.functions:
                 func = self.functions[node.func.id]
 
                 saved_symbols = self.symbols
                 saved_return = self.return_value
 
-                local_symbols = self.symbols.copy()
+                local = self.symbols.copy()
 
                 for param, arg in zip(func.args.args, node.args):
                     val = self.evaluate(arg)
                     if isinstance(val, SymbolicValue):
                         val.add_step(f"param:{param.arg}")
-                    local_symbols[param.arg] = val
+                    local[param.arg] = val
 
-                self.symbols = local_symbols
+                self.symbols = local
                 self.return_value = None
 
                 self.execute_block(func.body)
@@ -155,19 +153,35 @@ class SymbolicAnalyzer:
 
                 return ret
 
-            # dangerous method calls
+            # ----------- DANGEROUS CALL DETECTION -----------
+
+            # detect subprocess(..., shell=True)
             if isinstance(node.func, ast.Attribute):
                 method = node.func.attr
+
+                shell_true = False
+                for kw in node.keywords:
+                    if kw.arg == "shell":
+                        if isinstance(kw.value, ast.Constant) and kw.value.value is True:
+                            shell_true = True
 
                 for arg in node.args:
                     val = self.evaluate(arg)
 
-                    if isinstance(val, SymbolicValue) and val.tainted and method in DANGEROUS_METHODS:
+                    # os.system / popen
+                    if isinstance(val, SymbolicValue) and val.tainted and method in OS_COMMAND_METHODS:
                         trace = " → ".join(val.path + [method])
                         self.issues.append(
                             f"Command execution path: {trace}\n"
-                            f"Suggested fix: Avoid building shell commands from user input. "
-                            f"Use subprocess.run([...], shell=False) with argument lists."
+                            f"Suggested fix: Never pass user input to OS commands."
+                        )
+
+                    # subprocess shell injection
+                    if isinstance(val, SymbolicValue) and val.tainted and method in SUBPROCESS_METHODS and shell_true:
+                        trace = " → ".join(val.path + ["subprocess(shell=True)"])
+                        self.issues.append(
+                            f"Shell injection path: {trace}\n"
+                            f"Suggested fix: Use subprocess.run([...], shell=False) and pass arguments as a list."
                         )
 
                 return None
@@ -184,7 +198,7 @@ class SymbolicAnalyzer:
                         )
                 return None
 
-        # ----------- NEW: STRING CONCATENATION TAINT MERGE -----------
+        # taint merge in string building
         if isinstance(node, ast.BinOp):
             left = self.evaluate(node.left)
             right = self.evaluate(node.right)
