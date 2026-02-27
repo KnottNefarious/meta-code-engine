@@ -2,28 +2,43 @@ import ast
 import zlib
 
 
-# ---------- Symbolic Reasoning Layer (NEW) ----------
+# ---------- Symbolic Reasoning Layer ----------
 class SymbolicAnalyzer(ast.NodeVisitor):
     def __init__(self):
-        self.symbols = {}
+        # Preloaded Python built-ins
+        self.symbols = {
+            "print": "builtin",
+            "len": "builtin",
+            "range": "builtin",
+            "int": "builtin",
+            "str": "builtin",
+            "float": "builtin",
+            "list": "builtin",
+            "dict": "builtin",
+            "set": "builtin",
+            "bool": "builtin",
+            "abs": "builtin",
+            "min": "builtin",
+            "max": "builtin",
+            "sum": "builtin"
+        }
         self.issues = []
 
-    # Track variable assignments: x = something
+    # Track assignments
     def visit_Assign(self, node):
         if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
             name = node.targets[0].id
             value = self.evaluate(node.value)
             self.symbols[name] = value
-
         self.generic_visit(node)
 
-    # Detect using variables before they exist
+    # Detect use before assignment
     def visit_Name(self, node):
         if isinstance(node.ctx, ast.Load):
             if node.id not in self.symbols:
                 self.issues.append(f"Variable '{node.id}' used before assignment")
 
-    # Detect always-true or always-false conditions
+    # Detect pointless conditions
     def visit_If(self, node):
         condition = self.evaluate(node.test)
 
@@ -34,18 +49,14 @@ class SymbolicAnalyzer(ast.NodeVisitor):
 
         self.generic_visit(node)
 
-    # Evaluate simple expressions
+    # Evaluate expressions
     def evaluate(self, node):
-
-        # numeric or string constant
         if isinstance(node, ast.Constant):
             return node.value
 
-        # variable reference
         if isinstance(node, ast.Name):
             return self.symbols.get(node.id, None)
 
-        # math operations
         if isinstance(node, ast.BinOp):
             left = self.evaluate(node.left)
             right = self.evaluate(node.right)
@@ -63,7 +74,7 @@ class SymbolicAnalyzer(ast.NodeVisitor):
         return None
 
 
-# ---------- Report Object ----------
+# ---------- Report ----------
 class AnalysisReport:
     def __init__(self, issues, complexity_metrics, structural_analysis, resolution_predictions):
         self.issues = issues
@@ -81,7 +92,7 @@ class MetaCodeEngine:
         issues = []
         resolution_predictions = []
 
-        # ---------- 1. Syntax Check ----------
+        # Syntax check
         try:
             tree = ast.parse(code)
         except SyntaxError as e:
@@ -93,20 +104,19 @@ class MetaCodeEngine:
                 []
             )
 
-        # ---------- 2. Symbolic Reasoning (NEW STEP) ----------
+        # Symbolic reasoning
         analyzer = SymbolicAnalyzer()
         analyzer.visit(tree)
         issues.extend(analyzer.issues)
 
-        # ---------- 3. Static Pattern Analysis ----------
+        # Pattern detection
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 issues.append("Import detected (check security).")
-
             if isinstance(node, ast.While):
                 issues.append("While loop detected (possible infinite loop).")
 
-        # ---------- 4. Complexity ----------
+        # Complexity
         raw_size = len(code.encode())
         compressed = zlib.compress(code.encode())
         compressed_size = len(compressed)
@@ -122,7 +132,7 @@ class MetaCodeEngine:
             },
         }
 
-        # ---------- 5. Structural Analysis ----------
+        # Structural analysis
         max_depth = 0
 
         def depth(node, level=0):
@@ -144,7 +154,7 @@ class MetaCodeEngine:
             "node_type_distribution": node_counts,
         }
 
-        # ---------- 6. Suggestions ----------
+        # Suggestions
         if not issues:
             resolution_predictions.append({
                 "issue": "No major problems detected",
