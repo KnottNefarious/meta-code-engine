@@ -1,4 +1,5 @@
 import os
+import ast
 import traceback
 from flask import Flask, render_template, request, jsonify
 from meta_code.meta_engine import MetaCodeEngine
@@ -6,13 +7,12 @@ from meta_code.meta_engine import MetaCodeEngine
 app = Flask(__name__)
 
 
-# ---------------- HOME ----------------
 @app.route('/')
 def home():
     return render_template('index.html')
 
 
-# ---------------- SINGLE SNIPPET ANALYSIS ----------------
+# ---------------- SINGLE CODE ----------------
 @app.route('/api/analyze', methods=['POST'])
 def analyze():
     try:
@@ -32,12 +32,10 @@ def analyze():
         })
 
     except Exception:
-        error_text = traceback.format_exc()
-        print(error_text)
-        return jsonify({'success': False, 'error': error_text}), 500
+        return jsonify({'success': False, 'error': traceback.format_exc()}), 500
 
 
-# ---------------- PROJECT ANALYSIS (MULTI-FILE) ----------------
+# ---------------- PROJECT ANALYSIS ----------------
 @app.route('/api/analyze_project', methods=['POST'])
 def analyze_project():
     try:
@@ -46,43 +44,50 @@ def analyze_project():
 
         uploaded_files = request.files.getlist('files')
 
-        combined_parts = []
-
-        # IMPORTANT: provide base imports so merged code still works
-        combined_parts.append("import os\n")
+        definitions = []
+        top_level = []
 
         for file in uploaded_files:
-            filename = file.filename
-
-            if not filename.endswith('.py'):
+            if not file.filename.endswith(".py"):
                 continue
 
             content = file.read().decode('utf-8', errors='ignore')
 
+            # remove imports
             cleaned_lines = []
             for line in content.splitlines():
                 stripped = line.strip()
-
-                # remove project imports (we embed everything together)
-                if stripped.startswith("import "):
+                if stripped.startswith("import ") or stripped.startswith("from "):
                     continue
-                if stripped.startswith("from "):
-                    continue
-
                 cleaned_lines.append(line)
 
             cleaned_code = "\n".join(cleaned_lines)
 
-            combined_parts.append(f"\n# ===== FILE: {filename} =====\n")
-            combined_parts.append(cleaned_code)
+            # parse AST
+            try:
+                tree = ast.parse(cleaned_code)
+            except Exception:
+                continue
 
-        full_program = "\n".join(combined_parts)
+            # separate definitions from execution
+            for node in tree.body:
+                segment = ast.get_source_segment(cleaned_code, node)
+                if segment is None:
+                    continue
 
-        if not full_program.strip():
-            return jsonify({'success': False, 'error': 'No Python code found'}), 400
+                if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+                    definitions.append(segment)
+                else:
+                    top_level.append(segment)
+
+        # force base import
+        final_program = "import os\n\n"
+        final_program += "\n\n".join(definitions)
+        final_program += "\n\n"
+        final_program += "\n".join(top_level)
 
         engine = MetaCodeEngine()
-        report = engine.orchestrate(full_program)
+        report = engine.orchestrate(final_program)
 
         return jsonify({
             'success': True,
@@ -91,18 +96,14 @@ def analyze_project():
         })
 
     except Exception:
-        error_text = traceback.format_exc()
-        print(error_text)
-        return jsonify({'success': False, 'error': error_text}), 500
+        return jsonify({'success': False, 'error': traceback.format_exc()}), 500
 
 
-# ---------------- HEALTH CHECK ----------------
 @app.route('/api/health')
 def health():
     return jsonify({'status': 'ok'})
 
 
-# ---------------- RUN SERVER ----------------
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     debug_mode = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
