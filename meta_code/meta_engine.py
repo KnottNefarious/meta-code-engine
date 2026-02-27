@@ -4,6 +4,7 @@ DANGEROUS_CALLS = {"eval", "exec"}
 OS_COMMAND_METHODS = {"system", "popen"}
 SUBPROCESS_METHODS = {"Popen", "run", "call"}
 SQL_METHODS = {"execute", "executemany"}
+DESERIALIZE_METHODS = {"loads", "load"}  # pickle, yaml, marshal
 REQUEST_CONTAINERS = {"args", "form", "json", "values", "headers", "cookies", "data"}
 
 
@@ -159,7 +160,6 @@ class SymbolicAnalyzer:
 
                 obj = self.evaluate(node.func.value)
 
-                # class method
                 if isinstance(obj, SymbolicValue) and obj.class_name:
                     ret = self.execute_method(obj, node.func.attr, node.args)
                     if ret:
@@ -189,34 +189,12 @@ class SymbolicAnalyzer:
                         trace = " → ".join(val.path + ["SQL execute"])
                         self.issues.append(f"SQL injection path: {trace}")
 
+                    # DESERIALIZATION RCE
+                    if isinstance(val, SymbolicValue) and val.tainted and method in DESERIALIZE_METHODS:
+                        trace = " → ".join(val.path + ["unsafe deserialization"])
+                        self.issues.append(f"Deserialization RCE path: {trace}")
+
                 return None
-
-            # normal function
-            if isinstance(node.func, ast.Name) and node.func.id in self.functions:
-                func = self.functions[node.func.id]
-
-                saved_symbols = self.symbols
-                saved_return = self.return_value
-
-                local = {}
-
-                for param, arg in zip(func.args.args, node.args):
-                    val = self.evaluate(arg)
-                    if isinstance(val, SymbolicValue):
-                        val.add_step(f"param:{param.arg}")
-                    local[param.arg] = val
-
-                self.symbols = local
-                self.return_value = None
-
-                self.execute_block(func.body)
-
-                ret = self.return_value
-
-                self.symbols = saved_symbols
-                self.return_value = saved_return
-
-                return ret
 
         # string taint
         if isinstance(node, ast.BinOp):
