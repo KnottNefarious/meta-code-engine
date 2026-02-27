@@ -1,69 +1,66 @@
-# Meta-Code Engine
+Meta-Code Engine
 
-A Python semantic code analyzer with Flask web interface.
+Meta-Code Engine is a web-based Python code analysis system that analyzes source code structure, detects potential issues, and produces a structured reasoning report about the program.
 
-## Quick Start
+It is designed as a foundation for a future self-reasoning programming system — a program that can examine code and make logical conclusions about how it behaves.
 
-### Clone the repository
-```bash
-git clone https://github.com/KnottNefarious/meta-code-engine.git
-cd meta-code-engine
-```
+---
 
-### Install Flask
-```bash
-pip install flask
-```
+Features
 
-### Run the application
-```bash
+- Syntax validation
+- Structural AST (Abstract Syntax Tree) analysis
+- Complexity measurement
+- Pattern detection
+- Resolution suggestions
+- Web interface for interactive analysis
+
+---
+
+How It Works
+
+1. User pastes Python code into the website
+2. Flask API receives the code
+3. The MetaCodeEngine parses the code using Python's AST module
+4. The engine produces a reasoning report
+5. The report is returned to the browser as JSON and displayed
+
+Architecture:
+
+Browser → Flask API → MetaCodeEngine → AnalysisReport → JSON → UI
+
+---
+
+Running Locally
+
+Install dependencies:
+
+pip install -r requirements.txt
+
+Run:
+
 python app.py
-```
 
-### Access the analyzer
-- **Computer**: Visit `http://localhost:5000`
-- **Phone (same WiFi)**: Visit `http://YOUR_IP_ADDRESS:5000`
+Then open:
 
-## Finding Your IP Address
+http://127.0.0.1:5000
 
-**Windows:**
-1. Open Command Prompt
-2. Type: `ipconfig`
-3. Look for "IPv4 Address" (example: 192.168.1.100)
+---
 
-**Mac/Linux:**
-1. Open Terminal
-2. Type: `ifconfig`
-3. Look for "inet" (example: 192.168.1.100)
+API
 
-## Features
+POST /api/analyze
 
-- ✨ Real-time code analysis
-- ✨ Detects unused variables
-- ✨ Finds unreachable code
-- ✨ Mobile-friendly interface
-- ✨ Works on any device with a browser
+Body:
+{
+"code": "print('hello world')"
+}
 
-## How to Use
+Returns:
+Structured analysis report describing the code.
 
-1. Paste Python code into the text area
-2. Click the "Analyze" button
-3. Get instant semantic analysis results
+---
 
-Results display:
-- **Clean** - No issues found
-- **Issues** - List of problems detected
-- **Error** - Invalid Python syntax
+Goal
 
-## Project Structure
-
-- `app.py` - Flask web server
-- `templates/index.html` - Web interface
-- `meta_code/dissonance.py` - Code analyzer
-- `requirements.txt` - Python dependencies
-
-## What Makes This Tool Different?
-
-🔴 **Normal tools:** Check formatting & syntax
-
-🟢 **This tool:** Checks if code makes logical sense (semantic analysis)
+The long-term goal of this project is to develop a system capable of reasoning about programs — not just executing them — and eventually assisting in automated program understanding and correction.
