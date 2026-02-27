@@ -14,14 +14,18 @@ def analyze():
     try:
         data = request.json
         code = data.get('code', '')
+
         if not code.strip():
             return jsonify({'success': False, 'error': 'No code'}), 400
+
         engine = MetaCodeEngine()
         report = engine.orchestrate(code)
+
         issues = report.issues
         complexity = report.complexity_metrics
         structure = report.structural_analysis
         resolutions = report.resolution_predictions
+
         return jsonify({
             'success': True,
             'clean': len(issues) == 0,
@@ -47,12 +51,23 @@ def analyze():
                 for r in resolutions
             ],
         })
+
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
 
 @app.route('/api/health', methods=['GET'])
 def health():
     return jsonify({'status': 'ok'})
 
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=os.environ.get('FLASK_DEBUG', 'false').lower() == 'true')
+    # 🔥 Replit-safe dynamic port handling
+    port = int(os.environ.get("PORT", 5000))
+    debug_mode = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
+
+    app.run(
+        host='0.0.0.0',
+        port=port,
+        debug=debug_mode
+    )
