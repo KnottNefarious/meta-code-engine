@@ -1,7 +1,9 @@
 import ast
 
 MAX_LOOP_ITERATIONS = 8
+
 DANGEROUS_CALLS = {"eval", "exec", "os.system"}
+SQL_SINKS = {"execute", "executemany"}
 
 
 class SymbolicValue:
@@ -56,7 +58,7 @@ class SymbolicAnalyzer:
             self.evaluate(node.value)
             return
 
-        # if privilege check
+        # privilege check
         if isinstance(node, ast.If):
             if isinstance(node.test, ast.Compare):
                 left = node.test.left
@@ -93,6 +95,7 @@ class SymbolicAnalyzer:
         if isinstance(node, ast.Constant):
             return node.value
 
+        # variable lookup
         if isinstance(node, ast.Name):
             if node.id not in self.symbols:
                 self.issues.append(f"Variable '{node.id}' used before assignment")
@@ -106,25 +109,34 @@ class SymbolicAnalyzer:
             if isinstance(node.func, ast.Name) and node.func.id == "input":
                 return self.new_symbol()
 
-            # propagate through int()
+            # int propagation
             if isinstance(node.func, ast.Name) and node.func.id == "int":
                 val = self.evaluate(node.args[0])
                 return val
 
-            # ---------- user defined function ----------
-            if isinstance(node.func, ast.Name) and node.func.id in self.functions:
+            # ---------- SQL Injection Detection ----------
+            if isinstance(node.func, ast.Attribute):
+                method_name = node.func.attr
 
+                if method_name in SQL_SINKS:
+                    for arg in node.args:
+                        val = self.evaluate(arg)
+                        if isinstance(val, SymbolicValue) and val.tainted:
+                            self.issues.append(
+                                "Tainted input used in SQL query → SQL injection risk"
+                            )
+                return None
+
+            # ---------- user-defined function ----------
+            if isinstance(node.func, ast.Name) and node.func.id in self.functions:
                 func = self.functions[node.func.id]
 
-                # create local scope
                 local_symbols = self.symbols.copy()
 
-                # map arguments to parameters
                 for param, arg in zip(func.args.args, node.args):
                     arg_value = self.evaluate(arg)
                     local_symbols[param.arg] = arg_value
 
-                # run function body with local scope
                 saved_symbols = self.symbols
                 self.symbols = local_symbols
 
@@ -134,7 +146,7 @@ class SymbolicAnalyzer:
                 self.symbols = saved_symbols
                 return None
 
-            # ---------- sink detection ----------
+            # ---------- dangerous functions ----------
             if isinstance(node.func, ast.Name):
                 func_name = node.func.id
 
@@ -147,7 +159,7 @@ class SymbolicAnalyzer:
                             )
                 return None
 
-            # print
+            # print safe
             if isinstance(node.func, ast.Name) and node.func.id == "print":
                 for arg in node.args:
                     self.evaluate(arg)
