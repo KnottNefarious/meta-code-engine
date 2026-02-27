@@ -6,15 +6,19 @@ SQL_SINKS = {"execute", "executemany"}
 
 
 class SymbolicValue:
-    def __init__(self, name, tainted=False):
+    def __init__(self, name, tainted=False, path=None):
         self.name = name
         self.tainted = tainted
         self.attributes = {}
+        self.path = path or [name]
 
     def copy(self):
-        new = SymbolicValue(self.name, self.tainted)
+        new = SymbolicValue(self.name, self.tainted, list(self.path))
         new.attributes = dict(self.attributes)
         return new
+
+    def add_step(self, step):
+        self.path.append(step)
 
     def __repr__(self):
         return f"Symbolic({self.name}, tainted={self.tainted})"
@@ -58,57 +62,22 @@ class SymbolicAnalyzer:
 
         if isinstance(node, ast.Assign):
 
+            # attribute assignment
             if isinstance(node.targets[0], ast.Attribute):
                 obj = self.evaluate(node.targets[0].value)
                 value = self.evaluate(node.value)
-                if isinstance(obj, SymbolicValue):
+
+                if isinstance(obj, SymbolicValue) and isinstance(value, SymbolicValue):
+                    value.add_step(f"{node.targets[0].attr}")
                     obj.attributes[node.targets[0].attr] = value
                 return
 
+            # variable assignment
             if isinstance(node.targets[0], ast.Name):
-                self.symbols[node.targets[0].id] = self.evaluate(node.value)
-            return
-
-        if isinstance(node, ast.If):
-
-            # allowlist validation
-            if isinstance(node.test, ast.Compare):
-                left = node.test.left
-                op = node.test.ops[0]
-                right = node.test.comparators[0]
-
-                if (
-                    isinstance(left, ast.Name)
-                    and isinstance(op, ast.In)
-                    and isinstance(right, (ast.List, ast.Tuple))
-                ):
-                    true_branch = self.clone()
-                    false_branch = self.clone()
-
-                    sym = true_branch.symbols.get(left.id)
-                    if isinstance(sym, SymbolicValue):
-                        sym.tainted = False
-
-                    for s in node.body:
-                        true_branch.execute(s)
-
-                    for s in node.orelse:
-                        false_branch.execute(s)
-
-                    self.issues.extend(true_branch.issues)
-                    self.issues.extend(false_branch.issues)
-                    return
-
-            true_branch = self.clone()
-            false_branch = self.clone()
-
-            for s in node.body:
-                true_branch.execute(s)
-            for s in node.orelse:
-                false_branch.execute(s)
-
-            self.issues.extend(true_branch.issues)
-            self.issues.extend(false_branch.issues)
+                value = self.evaluate(node.value)
+                if isinstance(value, SymbolicValue):
+                    value.add_step(node.targets[0].id)
+                self.symbols[node.targets[0].id] = value
             return
 
         if isinstance(node, ast.Expr):
@@ -127,7 +96,10 @@ class SymbolicAnalyzer:
         if isinstance(node, ast.Attribute):
             obj = self.evaluate(node.value)
             if isinstance(obj, SymbolicValue):
-                return obj.attributes.get(node.attr, None)
+                val = obj.attributes.get(node.attr, None)
+                if isinstance(val, SymbolicValue):
+                    val.add_step(f"{node.attr}")
+                return val
             return None
 
         # ---------- CALLS ----------
@@ -163,7 +135,10 @@ class SymbolicAnalyzer:
                 local = self.symbols.copy()
 
                 for param, arg in zip(func.args.args, node.args):
-                    local[param.arg] = self.evaluate(arg)
+                    val = self.evaluate(arg)
+                    if isinstance(val, SymbolicValue):
+                        val.add_step(f"param:{param.arg}")
+                    local[param.arg] = val
 
                 self.symbols = local
                 for stmt in func.body:
@@ -171,34 +146,39 @@ class SymbolicAnalyzer:
                 self.symbols = saved
                 return None
 
-            # ---------- ATTRIBUTE CALL (MOST IMPORTANT FIX) ----------
+            # ATTRIBUTE CALL (SINK)
             if isinstance(node.func, ast.Attribute):
                 method = node.func.attr
-
                 for arg in node.args:
                     val = self.evaluate(arg)
 
-                    if method in SQL_SINKS and isinstance(val, SymbolicValue) and val.tainted:
-                        self.issues.append("SQL injection risk: tainted data in database query")
+                    if isinstance(val, SymbolicValue) and val.tainted:
+                        if method in DANGEROUS_METHODS:
+                            trace = " → ".join(val.path + [method])
+                            self.issues.append(f"Command execution path: {trace}")
 
-                    if method in DANGEROUS_METHODS and isinstance(val, SymbolicValue) and val.tainted:
-                        self.issues.append(f"Tainted data reaches '{method}' → command execution risk")
+                        if method in SQL_SINKS:
+                            trace = " → ".join(val.path + [method])
+                            self.issues.append(f"SQL injection path: {trace}")
                 return None
 
             # DIRECT DANGEROUS
             if isinstance(node.func, ast.Name):
                 for arg in node.args:
                     val = self.evaluate(arg)
-                    if node.func.id in DANGEROUS_CALLS and isinstance(val, SymbolicValue) and val.tainted:
-                        self.issues.append(f"Tainted data reaches '{node.func.id}' → code execution risk")
+                    if isinstance(val, SymbolicValue) and val.tainted and node.func.id in DANGEROUS_CALLS:
+                        trace = " → ".join(val.path + [node.func.id])
+                        self.issues.append(f"Code execution path: {trace}")
                 return None
 
         # taint propagation
         if isinstance(node, ast.BinOp):
             left = self.evaluate(node.left)
             right = self.evaluate(node.right)
-            if isinstance(left, SymbolicValue) or isinstance(right, SymbolicValue):
-                return SymbolicValue("expr", tainted=True)
+            if isinstance(left, SymbolicValue):
+                return left
+            if isinstance(right, SymbolicValue):
+                return right
 
         return None
 
@@ -209,7 +189,7 @@ class AnalysisReport:
         self.complexity_metrics = {}
         self.structural_analysis = {}
         self.resolution_predictions = [
-            {"issue": i, "suggestion": "Review code", "convergence": False}
+            {"issue": i, "suggestion": "Investigate this data flow", "convergence": False}
             for i in issues
         ]
 
