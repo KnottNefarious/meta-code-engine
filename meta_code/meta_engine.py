@@ -7,6 +7,7 @@ class SymbolicValue:
     def __init__(self, name):
         self.name = name
         self.non_zero = False
+        self.possible_strings = set()  # NEW: track string constraints
 
     def __repr__(self):
         return f"Symbolic({self.name})"
@@ -46,10 +47,30 @@ class SymbolicAnalyzer:
             self.evaluate(node.value)
             return
 
-        # -------- IF with constraint tracking --------
+        # ---------- IF ----------
         if isinstance(node, ast.If):
 
-            # detect x != 0
+            # detect string comparison
+            if isinstance(node.test, ast.Compare):
+                left = node.test.left
+                right = node.test.comparators[0]
+                op = node.test.ops[0]
+
+                # password == "admin"
+                if (
+                    isinstance(left, ast.Name)
+                    and isinstance(right, ast.Constant)
+                    and isinstance(right.value, str)
+                    and isinstance(op, ast.Eq)
+                ):
+                    sym = self.symbols.get(left.id)
+
+                    if isinstance(sym, SymbolicValue):
+                        self.issues.append(
+                            f"Input can equal '{right.value}' → privileged branch reachable"
+                        )
+
+            # detect numeric constraint x != 0
             if isinstance(node.test, ast.Compare):
                 left = node.test.left
                 right = node.test.comparators[0]
@@ -117,25 +138,20 @@ class SymbolicAnalyzer:
                     self.evaluate(arg)
                 return None
 
-        # -------- symbolic arithmetic --------
+        # arithmetic
         if isinstance(node, ast.BinOp):
             left = self.evaluate(node.left)
             right = self.evaluate(node.right)
 
-            # division safety reasoning
             if isinstance(node.op, ast.Div):
                 if right == 0:
                     self.issues.append("Guaranteed division by zero")
-
                 if isinstance(right, SymbolicValue) and not right.non_zero:
                     self.issues.append("Possible division by zero")
 
-            # IMPORTANT FIX:
-            # If either side is symbolic → return symbolic result (DO NOT COMPUTE)
             if isinstance(left, SymbolicValue) or isinstance(right, SymbolicValue):
                 return SymbolicValue("expr")
 
-            # only compute real numbers
             if isinstance(node.op, ast.Add):
                 return left + right
             if isinstance(node.op, ast.Sub):
