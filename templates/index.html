@@ -1,261 +1,155 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Infinity × Fugue — Code Analysis</title>
-    <style>
-        *, *::before, *::after { box-sizing: border-box; }
-        body { font-family: Arial, sans-serif; background: #0d0d0d; color: #e0e0e0; padding: 20px; margin: 0; }
-        h1 { text-align: center; font-size: 1.8rem; color: #c8a0ff; margin-bottom: 4px; }
-        .subtitle { text-align: center; font-size: 0.85rem; color: #888; margin-bottom: 24px; }
-        textarea {
-            width: 100%; padding: 12px; font-size: 14px; font-family: monospace;
-            background: #1a1a2e; color: #d0d0ff; border: 1px solid #444; border-radius: 6px;
-            resize: vertical;
-        }
-        button {
-            display: block; margin: 12px auto 0; padding: 10px 28px; font-size: 16px;
-            cursor: pointer; background: #6a0dad; color: #fff; border: none; border-radius: 6px;
-            transition: background 0.2s;
-        }
-        button:hover { background: #8b1fcf; }
-        .loading { display: none; text-align: center; color: #a0a0ff; font-weight: bold; margin-top: 12px; }
-        .error-msg { color: #ff6b6b; font-weight: bold; }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Meta-Code Engine</title>
 
-        /* Section cards */
-        .section-card {
-            margin-top: 20px; padding: 16px; border-radius: 8px; border-left: 5px solid;
-        }
-        .section-card h3 { margin: 0 0 10px; font-size: 1rem; }
-        .section-card .formula { font-size: 0.75rem; color: #aaa; margin-bottom: 10px; font-style: italic; }
-
-        /* Section colours */
-        .card-dissonance { background: #2a1010; border-color: #e05555; }
-        .card-dissonance h3 { color: #ff8080; }
-        .card-complexity  { background: #0d1a2e; border-color: #4488ff; }
-        .card-complexity  h3 { color: #6fb3ff; }
-        .card-structure   { background: #0d2a1a; border-color: #44bb66; }
-        .card-structure   h3 { color: #70e090; }
-        .card-resolution  { background: #2a2000; border-color: #ccaa00; }
-        .card-resolution  h3 { color: #ffd040; }
-
-        .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.8rem; font-weight: bold; }
-        .badge-clean   { background: #1a4d2a; color: #5fdd7f; }
-        .badge-issues  { background: #4d1a1a; color: #ff7070; }
-
-        .kv-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0; }
-        .kv-label { color: #aaa; font-size: 0.85rem; min-width: 130px; }
-        .kv-value { font-size: 0.85rem; color: #e8e8e8; }
-
-        .pattern-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-        .pattern-pill {
-            background: #1a2a4a; border: 1px solid #3355aa; border-radius: 4px;
-            padding: 2px 8px; font-size: 0.78rem; color: #90b8ff;
-        }
-        .pattern-pill .cnt { color: #ffd080; font-weight: bold; }
-
-        .node-dist { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-        .node-pill {
-            background: #0d2a1a; border: 1px solid #226633; border-radius: 4px;
-            padding: 2px 8px; font-size: 0.78rem; color: #80d0a0;
-        }
-        .node-pill .cnt { color: #ffd080; font-weight: bold; }
-
-        .resolution-item { background: #1a1800; border: 1px solid #554400; border-radius: 6px; padding: 10px; margin-bottom: 8px; }
-        .resolution-issue { font-size: 0.85rem; color: #ffcc44; margin-bottom: 4px; }
-        .resolution-suggestion { font-size: 0.85rem; color: #d0d0d0; }
-        .resolution-convergence { font-size: 0.75rem; color: #888; margin-top: 4px; }
-
-        .ratio-bar-wrap { margin-top: 6px; }
-        .ratio-bar { height: 8px; border-radius: 4px; background: #223; overflow: hidden; }
-        .ratio-bar-fill { height: 100%; border-radius: 4px; transition: width 0.4s; }
-
-        pre { white-space: pre-wrap; word-break: break-word; font-size: 0.82rem; color: #ffaaaa; margin: 6px 0 0; }
-
-        @media (max-width: 600px) {
-            h1 { font-size: 1.3rem; }
-            .kv-label { min-width: 100px; }
-        }
-    </style>
+<style>
+body{
+    background:#0f172a;
+    color:#e2e8f0;
+    font-family:Arial,Helvetica,sans-serif;
+    padding:18px;
+}
+h1{
+    color:#38bdf8;
+    text-align:center;
+}
+textarea{
+    width:100%;
+    height:260px;
+    background:#020617;
+    color:#f8fafc;
+    border:1px solid #334155;
+    padding:10px;
+    font-family:monospace;
+    font-size:14px;
+    border-radius:8px;
+}
+button{
+    background:#0284c7;
+    color:white;
+    border:none;
+    padding:12px 18px;
+    border-radius:8px;
+    font-size:16px;
+    margin-top:10px;
+    cursor:pointer;
+}
+button:hover{
+    background:#0369a1;
+}
+pre{
+    background:#020617;
+    border:1px solid #334155;
+    padding:12px;
+    border-radius:8px;
+    white-space:pre-wrap;
+    margin-top:14px;
+}
+hr{
+    margin:35px 0;
+    border:1px solid #334155;
+}
+.section{
+    margin-top:25px;
+}
+</style>
 </head>
+
 <body>
-    <h1>∞ × Fugue — Code Analysis</h1>
-    <p class="subtitle">Infinity × Fugue pipeline: dissonance · complexity · structure · resolution</p>
 
-    <textarea id="codeInput" rows="10" placeholder="Enter your Python code here..."></textarea>
-    <button id="analyzeBtn">⚙ Analyze</button>
-    <div class="loading" id="loadingIndicator">⏳ Running pipeline…</div>
+<h1>Meta-Code Engine</h1>
 
-    <!-- Section 1: Dissonance -->
-    <div class="section-card card-dissonance" id="sec-dissonance" style="display:none;">
-        <h3>🔴 Dissonance Check — Formal Consistency</h3>
-        <p class="formula">Γ ⊢ ϕ</p>
-        <div id="status"></div>
-        <div id="issues_count"></div>
-        <div id="reportText"></div>
-    </div>
+<div class="section">
+<h2>Analyze Single Python Code</h2>
 
-    <!-- Section 2: Kolmogorov Complexity -->
-    <div class="section-card card-complexity" id="sec-complexity" style="display:none;">
-        <h3>🔵 Kolmogorov Complexity</h3>
-        <p class="formula">K(x) = min &#123; |p| : U(p) = x &#125;</p>
-        <div id="complexityContent"></div>
-    </div>
+<textarea id="codeInput" placeholder="Paste Python code here..."></textarea>
+<br>
+<button onclick="analyzeCode()">Analyze Code</button>
 
-    <!-- Section 3: Structural Analysis -->
-    <div class="section-card card-structure" id="sec-structure" style="display:none;">
-        <h3>🟢 Structural Analysis</h3>
-        <p class="formula">F : C ≅ D</p>
-        <div id="structureContent"></div>
-    </div>
+<pre id="result">Results will appear here...</pre>
+</div>
 
-    <!-- Section 4: Resolution Predictions -->
-    <div class="section-card card-resolution" id="sec-resolution" style="display:none;">
-        <h3>🟡 Resolution Predictions</h3>
-        <p class="formula">lim Sₙ → L</p>
-        <div id="resolutionContent"></div>
-    </div>
+<hr>
 
-    <script>
-        function escapeHtml(str) {
-            return String(str)
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;');
-        }
+<div class="section">
+<h2>Analyze Full Project (Upload .py Files)</h2>
 
-        function showSection(id) {
-            document.getElementById(id).style.display = 'block';
-        }
-        function hideSection(id) {
-            document.getElementById(id).style.display = 'none';
-        }
+<input type="file" id="projectFiles" multiple accept=".py">
+<br>
+<button onclick="analyzeProject()">Analyze Uploaded Project</button>
 
-        document.getElementById('analyzeBtn').addEventListener('click', function() {
-            const codeInput = document.getElementById('codeInput').value;
-            const loadingIndicator = document.getElementById('loadingIndicator');
+<pre id="projectResult">Upload multiple Python files to scan an entire project.</pre>
+</div>
 
-            if (!codeInput.trim()) {
-                alert('Please enter some code!');
-                return;
-            }
+<script>
 
-            // Reset all sections
-            ['sec-dissonance','sec-complexity','sec-structure','sec-resolution'].forEach(hideSection);
-            document.getElementById('status').innerHTML = '';
-            document.getElementById('issues_count').innerHTML = '';
-            document.getElementById('reportText').innerHTML = '';
-            document.getElementById('complexityContent').innerHTML = '';
-            document.getElementById('structureContent').innerHTML = '';
-            document.getElementById('resolutionContent').innerHTML = '';
-            loadingIndicator.style.display = 'block';
+async function analyzeCode(){
+    const code=document.getElementById("codeInput").value;
+    document.getElementById("result").textContent="Analyzing...";
 
-            fetch('/api/analyze', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ code: codeInput })
-            })
-            .then(response => {
-                console.log('Response status:', response.status);
-                if (!response.ok) {
-                    throw new Error('Network response was not ok: ' + response.status);
-                }
-                return response.json();
-            })
-            .then(data => {
-                console.log('Received data:', data);
-                loadingIndicator.style.display = 'none';
-
-                // --- Section 1: Dissonance ---
-                showSection('sec-dissonance');
-                const clean = data.clean !== undefined ? data.clean : true;
-                const issuesCount = data.issues_count !== undefined ? data.issues_count : 0;
-                document.getElementById('status').innerHTML =
-                    '<span class="badge ' + (clean ? 'badge-clean' : 'badge-issues') + '">' +
-                    (clean ? 'Clean ✅' : 'Issues Found ⚠️') + '</span>';
-                document.getElementById('issues_count').innerHTML =
-                    '<div class="kv-row" style="margin-top:8px;"><span class="kv-label">Issues count:</span>' +
-                    '<span class="kv-value">' + issuesCount + '</span></div>';
-                const reportText = data.report || '';
-                document.getElementById('reportText').innerHTML = reportText
-                    ? '<pre>' + escapeHtml(reportText) + '</pre>'
-                    : '';
-
-                // --- Section 2: Kolmogorov Complexity ---
-                if (data.complexity) {
-                    showSection('sec-complexity');
-                    const c = data.complexity;
-                    const ratio = typeof c.ratio === 'number' ? c.ratio : 0;
-                    const ratioPercent = Math.min(Math.round(ratio * 100), 100);
-                    const barColor = ratio < 0.4 ? '#44bb66' : ratio < 0.7 ? '#ffaa00' : '#e05555';
-                    let html = '';
-                    html += '<div class="kv-row"><span class="kv-label">Raw AST size:</span><span class="kv-value">' + (c.raw_size || 0) + ' bytes</span></div>';
-                    html += '<div class="kv-row"><span class="kv-label">Compressed size:</span><span class="kv-value">' + (c.compressed_size || 0) + ' bytes</span></div>';
-                    html += '<div class="kv-row"><span class="kv-label">Complexity ratio:</span><span class="kv-value">' + ratio.toFixed(3) + ' <span style="color:#aaa;font-size:0.78rem;">(lower = simpler)</span></span></div>';
-                    html += '<div class="ratio-bar-wrap"><div class="ratio-bar"><div class="ratio-bar-fill" style="width:' + ratioPercent + '%;background:' + barColor + ';"></div></div></div>';
-                    if (c.patterns && typeof c.patterns === 'object') {
-                        const entries = Object.entries(c.patterns).filter(([,v]) => v > 0).sort((a,b) => b[1]-a[1]);
-                        if (entries.length > 0) {
-                            html += '<div style="margin-top:10px;font-size:0.82rem;color:#aaa;">Top patterns:</div>';
-                            html += '<div class="pattern-list">';
-                            entries.forEach(([k,v]) => {
-                                html += '<span class="pattern-pill">' + escapeHtml(k) + ' <span class="cnt">×' + v + '</span></span>';
-                            });
-                            html += '</div>';
-                        }
-                    }
-                    document.getElementById('complexityContent').innerHTML = html;
-                }
-
-                // --- Section 3: Structural Analysis ---
-                if (data.structure) {
-                    showSection('sec-structure');
-                    const s = data.structure;
-                    let html = '';
-                    html += '<div class="kv-row"><span class="kv-label">AST depth:</span><span class="kv-value">' + (s.depth || 0) + '</span></div>';
-                    html += '<div class="kv-row"><span class="kv-label">Branching factor:</span><span class="kv-value">' + (typeof s.branching_factor === 'number' ? s.branching_factor.toFixed(4) : '0.0000') + '</span></div>';
-                    if (s.node_type_distribution && typeof s.node_type_distribution === 'object') {
-                        const entries = Object.entries(s.node_type_distribution).sort((a,b) => b[1]-a[1]);
-                        if (entries.length > 0) {
-                            html += '<div style="margin-top:10px;font-size:0.82rem;color:#aaa;">Node type distribution:</div>';
-                            html += '<div class="node-dist">';
-                            entries.forEach(([k,v]) => {
-                                html += '<span class="node-pill">' + escapeHtml(k) + ' <span class="cnt">×' + v + '</span></span>';
-                            });
-                            html += '</div>';
-                        }
-                    }
-                    document.getElementById('structureContent').innerHTML = html;
-                }
-
-                // --- Section 4: Resolution Predictions ---
-                showSection('sec-resolution');
-                const resolutions = Array.isArray(data.resolutions) ? data.resolutions : [];
-                if (resolutions.length === 0) {
-                    document.getElementById('resolutionContent').innerHTML =
-                        '<p style="color:#88cc44;font-size:0.9rem;">✅ No resolutions needed — code is clean.</p>';
-                } else {
-                    let html = '';
-                    resolutions.forEach(r => {
-                        html += '<div class="resolution-item">';
-                        html += '<div class="resolution-issue">⚠ ' + escapeHtml(r.issue || '') + '</div>';
-                        html += '<div class="resolution-suggestion">💡 ' + escapeHtml(r.suggestion || '') + '</div>';
-                        html += '<div class="resolution-convergence">Convergence: ' + (r.convergence ? '🔁 recurring issue' : '🆕 first occurrence') + '</div>';
-                        html += '</div>';
-                    });
-                    document.getElementById('resolutionContent').innerHTML = html;
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                loadingIndicator.style.display = 'none';
-                showSection('sec-dissonance');
-                document.getElementById('status').innerHTML =
-                    '<p class="error-msg">Error: ' + escapeHtml(error.message) + '</p>';
-            });
+    try{
+        const response=await fetch("/api/analyze",{
+            method:"POST",
+            headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({code:code})
         });
-    </script>
+
+        const data=await response.json();
+
+        if(!data.success){
+            document.getElementById("result").textContent="Error: "+data.error;
+            return;
+        }
+
+        document.getElementById("result").textContent=
+            "Issues Found: "+data.issues_count+"\n\n"+data.report;
+
+    }catch(err){
+        document.getElementById("result").textContent="Request failed: "+err;
+    }
+}
+
+async function analyzeProject(){
+    const files=document.getElementById("projectFiles").files;
+
+    if(!files.length){
+        alert("Please select one or more Python files.");
+        return;
+    }
+
+    const formData=new FormData();
+
+    for(let i=0;i<files.length;i++){
+        formData.append("files",files[i]);
+    }
+
+    document.getElementById("projectResult").textContent="Uploading and analyzing project...";
+
+    try{
+        const response=await fetch("/api/analyze_project",{
+            method:"POST",
+            body:formData
+        });
+
+        const data=await response.json();
+
+        if(!data.success){
+            document.getElementById("projectResult").textContent="Error: "+data.error;
+            return;
+        }
+
+        document.getElementById("projectResult").textContent=
+            "Issues Found: "+data.issues_count+"\n\n"+data.report;
+
+    }catch(err){
+        document.getElementById("projectResult").textContent="Upload failed: "+err;
+    }
+}
+
+</script>
+
 </body>
 </html>
