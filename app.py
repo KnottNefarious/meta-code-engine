@@ -1,6 +1,9 @@
 import os
 import ast
+import io
+import zipfile
 import traceback
+import requests
 from flask import Flask, render_template, request, jsonify
 from meta_code.meta_engine import MetaCodeEngine
 
@@ -12,7 +15,7 @@ def home():
     return render_template('index.html')
 
 
-# ---------------- SINGLE CODE ----------------
+# ---------------- SINGLE SNIPPET ----------------
 @app.route('/api/analyze', methods=['POST'])
 def analyze():
     try:
@@ -35,23 +38,40 @@ def analyze():
         return jsonify({'success': False, 'error': traceback.format_exc()}), 500
 
 
-# ---------------- PROJECT ANALYSIS ----------------
-@app.route('/api/analyze_project', methods=['POST'])
-def analyze_project():
+# ---------------- GITHUB REPO ANALYSIS ----------------
+@app.route('/api/analyze_repo', methods=['POST'])
+def analyze_repo():
     try:
-        if 'files' not in request.files:
-            return jsonify({'success': False, 'error': 'No files uploaded'}), 400
+        data = request.json
+        repo_url = data.get("url", "").strip()
 
-        uploaded_files = request.files.getlist('files')
+        if not repo_url.startswith("https://github.com/"):
+            return jsonify({'success': False, 'error': 'Invalid GitHub URL'}), 400
+
+        parts = repo_url.replace("https://github.com/", "").split("/")
+        if len(parts) < 2:
+            return jsonify({'success': False, 'error': 'Invalid repository format'}), 400
+
+        user, repo = parts[0], parts[1]
+
+        zip_url = f"https://github.com/{user}/{repo}/archive/refs/heads/main.zip"
+
+        # download repo zip
+        response = requests.get(zip_url, timeout=30)
+        if response.status_code != 200:
+            return jsonify({'success': False, 'error': 'Could not download repository'}), 400
+
+        zip_bytes = io.BytesIO(response.content)
+        z = zipfile.ZipFile(zip_bytes)
 
         definitions = []
         top_level = []
 
-        for file in uploaded_files:
-            if not file.filename.endswith(".py"):
+        for filename in z.namelist():
+            if not filename.endswith(".py"):
                 continue
 
-            content = file.read().decode('utf-8', errors='ignore')
+            content = z.read(filename).decode("utf-8", errors="ignore")
 
             # remove imports
             cleaned_lines = []
@@ -63,13 +83,11 @@ def analyze_project():
 
             cleaned_code = "\n".join(cleaned_lines)
 
-            # parse AST
             try:
                 tree = ast.parse(cleaned_code)
             except Exception:
                 continue
 
-            # separate definitions from execution
             for node in tree.body:
                 segment = ast.get_source_segment(cleaned_code, node)
                 if segment is None:
@@ -80,7 +98,9 @@ def analyze_project():
                 else:
                     top_level.append(segment)
 
-        # force base import
+        if not definitions and not top_level:
+            return jsonify({'success': False, 'error': 'No Python files found in repository'}), 400
+
         final_program = "import os\n\n"
         final_program += "\n\n".join(definitions)
         final_program += "\n\n"
