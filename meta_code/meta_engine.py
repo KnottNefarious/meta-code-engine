@@ -1,98 +1,49 @@
 import ast
 
-DANGEROUS_CALLS = {"eval", "exec"}
-OS_COMMAND_METHODS = {"system", "popen"}
-SUBPROCESS_METHODS = {"Popen", "run", "call"}
 SQL_METHODS = {"execute", "executemany"}
+SUBPROCESS_METHODS = {"Popen", "run", "call"}
 DESERIALIZE_METHODS = {"loads", "load"}
-FILE_METHODS = {"open"}  # path traversal
+SAFE_PATH_FUNCS = {"basename", "secure_filename"}
 REQUEST_CONTAINERS = {"args", "form", "json", "values", "headers", "cookies", "data"}
 
 
 class SymbolicValue:
-    def __init__(self, name, tainted=False, path=None, class_name=None):
+    def __init__(self, name, tainted=False, path=None):
         self.name = name
         self.tainted = tainted
         self.path = path or [name]
-        self.class_name = class_name
 
-    def copy(self):
-        return SymbolicValue(self.name, self.tainted, list(self.path), self.class_name)
+    def sanitize(self, label):
+        clean = SymbolicValue(self.name, False, list(self.path))
+        clean.path.append(f"sanitized:{label}")
+        return clean
 
     def merge(self, other):
-        merged = SymbolicValue(self.name, self.tainted or other.tainted, list(self.path), self.class_name)
+        merged = SymbolicValue(self.name, self.tainted or other.tainted, list(self.path))
         merged.path = list(dict.fromkeys(self.path + other.path))
         return merged
-
-    def add_step(self, step):
-        self.path.append(step)
 
 
 class SymbolicAnalyzer:
     def __init__(self):
         self.symbols = {}
-        self.functions = {}
-        self.classes = {}
         self.issues = []
-        self.symbolic_counter = 0
-        self.return_value = None
+        self.counter = 0
+        self.functions = {}
 
-    def new_symbol(self, source="input"):
-        self.symbolic_counter += 1
-        return SymbolicValue(f"{source}_{self.symbolic_counter}", True, [source])
+    def new_symbol(self, source="request"):
+        self.counter += 1
+        return SymbolicValue(f"{source}_{self.counter}", True, [source])
 
-    def run(self, tree):
-        for stmt in tree.body:
-            self.execute(stmt)
+    def is_request(self, node):
+        return (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "request"
+            and node.attr in REQUEST_CONTAINERS
+        )
 
-        for func in self.functions.values():
-            saved = self.symbols
-            self.symbols = self.symbols.copy()
-
-            for arg in func.args.args:
-                self.symbols[arg.arg] = self.new_symbol("param")
-
-            self.execute_block(func.body)
-            self.symbols = saved
-
-    def execute_block(self, body):
-        for stmt in body:
-            if self.execute(stmt) == "return":
-                break
-
-    def execute(self, node):
-
-        if isinstance(node, ast.FunctionDef):
-            self.functions[node.name] = node
-            return
-
-        if isinstance(node, ast.ClassDef):
-            self.classes[node.name] = node
-            return
-
-        if isinstance(node, ast.Return):
-            self.return_value = self.evaluate(node.value)
-            return "return"
-
-        if isinstance(node, ast.Assign):
-            if isinstance(node.targets[0], ast.Name):
-                value = self.evaluate(node.value)
-                if isinstance(value, SymbolicValue):
-                    value.add_step(node.targets[0].id)
-                self.symbols[node.targets[0].id] = value
-            return
-
-        if isinstance(node, ast.Expr):
-            self.evaluate(node.value)
-
-    def is_request_container(self, node):
-        if isinstance(node, ast.Attribute):
-            if isinstance(node.value, ast.Name) and node.value.id == "request":
-                if node.attr in REQUEST_CONTAINERS:
-                    return True
-        return False
-
-    def evaluate(self, node):
+    def eval_node(self, node):
 
         if node is None:
             return None
@@ -101,75 +52,26 @@ class SymbolicAnalyzer:
             return node.value
 
         if isinstance(node, ast.Name):
-            return self.symbols.get(node.id, None)
+            return self.symbols.get(node.id)
 
-        # open(tainted_path)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            if node.func.id == "open":
-                for arg in node.args:
-                    val = self.evaluate(arg)
-                    if isinstance(val, SymbolicValue) and val.tainted:
-                        trace = " → ".join(val.path + ["file open"])
-                        self.issues.append(f"Path traversal / arbitrary file read: {trace}")
-                return None
-
-        # class instantiation
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            if node.func.id in self.classes:
-                return SymbolicValue(node.func.id, False, [node.func.id], class_name=node.func.id)
-
-        # request containers
-        if self.is_request_container(node):
-            return self.new_symbol("request")
-
+        # request.args.get(...)
         if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Attribute) and self.is_request(node.func.value):
+                sym = self.new_symbol()
+                sym.path.append("get")
+                return sym
 
-            # input()
-            if isinstance(node.func, ast.Name) and node.func.id == "input":
-                return self.new_symbol("input")
+        # sanitizer
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr in SAFE_PATH_FUNCS:
+                val = self.eval_node(node.args[0])
+                if isinstance(val, SymbolicValue):
+                    return val.sanitize(node.func.attr)
 
-            # request.args.get(...)
-            if isinstance(node.func, ast.Attribute):
-                if self.is_request_container(node.func.value):
-                    sym = self.new_symbol("request")
-                    sym.add_step(node.func.attr)
-                    return sym
-
-                method = node.func.attr
-
-                shell_true = any(
-                    kw.arg == "shell" and isinstance(kw.value, ast.Constant) and kw.value.value is True
-                    for kw in node.keywords
-                )
-
-                for arg in node.args:
-                    val = self.evaluate(arg)
-
-                    # command injection
-                    if isinstance(val, SymbolicValue) and val.tainted and method in OS_COMMAND_METHODS:
-                        trace = " → ".join(val.path + [method])
-                        self.issues.append(f"Command execution path: {trace}")
-
-                    if isinstance(val, SymbolicValue) and val.tainted and method in SUBPROCESS_METHODS and shell_true:
-                        trace = " → ".join(val.path + ["subprocess(shell=True)"])
-                        self.issues.append(f"Shell injection path: {trace}")
-
-                    # SQL injection
-                    if isinstance(val, SymbolicValue) and val.tainted and method in SQL_METHODS:
-                        trace = " → ".join(val.path + ["SQL execute"])
-                        self.issues.append(f"SQL injection path: {trace}")
-
-                    # unsafe deserialization
-                    if isinstance(val, SymbolicValue) and val.tainted and method in DESERIALIZE_METHODS:
-                        trace = " → ".join(val.path + ["unsafe deserialization"])
-                        self.issues.append(f"Deserialization RCE path: {trace}")
-
-                return None
-
-        # string taint
+        # string concatenation
         if isinstance(node, ast.BinOp):
-            left = self.evaluate(node.left)
-            right = self.evaluate(node.right)
+            left = self.eval_node(node.left)
+            right = self.eval_node(node.right)
 
             if isinstance(left, SymbolicValue) and isinstance(right, SymbolicValue):
                 return left.merge(right)
@@ -178,24 +80,75 @@ class SymbolicAnalyzer:
             if isinstance(right, SymbolicValue):
                 return right
 
+        # open()
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "open":
+            arg_val = self.eval_node(node.args[0])
+            if isinstance(arg_val, SymbolicValue) and arg_val.tainted:
+                self.issues.append("Path traversal vulnerability detected")
+            return None
+
+        # SQL
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr in SQL_METHODS:
+                query = self.eval_node(node.args[0])
+                if len(node.args) == 1 and isinstance(query, SymbolicValue) and query.tainted:
+                    self.issues.append("SQL injection vulnerability detected")
+
+        # subprocess
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr in SUBPROCESS_METHODS:
+                shell_true = any(
+                    kw.arg == "shell" and isinstance(kw.value, ast.Constant) and kw.value.value is True
+                    for kw in node.keywords
+                )
+                cmd = self.eval_node(node.args[0])
+                if isinstance(cmd, SymbolicValue) and cmd.tainted and shell_true:
+                    self.issues.append("Command injection vulnerability detected")
+
+        # deserialization
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr in DESERIALIZE_METHODS:
+                val = self.eval_node(node.args[0])
+                if isinstance(val, SymbolicValue) and val.tainted:
+                    self.issues.append("Unsafe deserialization vulnerability detected")
+
         return None
+
+    def execute_block(self, body):
+        for stmt in body:
+            if isinstance(stmt, ast.Assign) and isinstance(stmt.targets[0], ast.Name):
+                self.symbols[stmt.targets[0].id] = self.eval_node(stmt.value)
+            elif isinstance(stmt, ast.Expr):
+                self.eval_node(stmt.value)
+
+    def analyze(self, tree):
+
+        # collect functions
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                self.functions[node.name] = node
+
+        # simulate calling every function
+        for func in self.functions.values():
+            old_symbols = self.symbols.copy()
+
+            # parameters become attacker-controlled
+            for arg in func.args.args:
+                self.symbols[arg.arg] = self.new_symbol("param")
+
+            self.execute_block(func.body)
+
+            self.symbols = old_symbols
 
 
 class AnalysisReport:
     def __init__(self, issues):
         self.issues = issues
-        self.complexity_metrics = {}
-        self.structural_analysis = {}
-        self.resolution_predictions = []
 
 
 class MetaCodeEngine:
     def orchestrate(self, code):
-        try:
-            tree = ast.parse(code)
-        except SyntaxError as e:
-            return AnalysisReport([f"Syntax error: {e}"])
-
+        tree = ast.parse(code)
         analyzer = SymbolicAnalyzer()
-        analyzer.run(tree)
+        analyzer.analyze(tree)
         return AnalysisReport(analyzer.issues)
