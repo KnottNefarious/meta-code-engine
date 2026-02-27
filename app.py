@@ -1,16 +1,18 @@
 import os
+import traceback
 from flask import Flask, render_template, request, jsonify
 from meta_code.meta_engine import MetaCodeEngine
 
 app = Flask(__name__)
 
-# ---------------- Home ----------------
+
+# ---------------- HOME ----------------
 @app.route('/')
 def home():
     return render_template('index.html')
 
 
-# ---------------- Single snippet analysis ----------------
+# ---------------- SINGLE SNIPPET ANALYSIS ----------------
 @app.route('/api/analyze', methods=['POST'])
 def analyze():
     try:
@@ -18,7 +20,7 @@ def analyze():
         code = data.get('code', '')
 
         if not code.strip():
-            return jsonify({'success': False, 'error': 'No code'}), 400
+            return jsonify({'success': False, 'error': 'No code provided'}), 400
 
         engine = MetaCodeEngine()
         report = engine.orchestrate(code)
@@ -29,13 +31,13 @@ def analyze():
             'report': "\n\n".join(report.issues)
         })
 
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)}), 500
+    except Exception:
+        error_text = traceback.format_exc()
+        print(error_text)
+        return jsonify({'success': False, 'error': error_text}), 500
 
 
-# ---------------- MULTI-FILE PROJECT ANALYSIS ----------------
+# ---------------- PROJECT ANALYSIS (MULTI-FILE) ----------------
 @app.route('/api/analyze_project', methods=['POST'])
 def analyze_project():
     try:
@@ -44,25 +46,40 @@ def analyze_project():
 
         uploaded_files = request.files.getlist('files')
 
-        combined_code = []
+        combined_parts = []
+
+        # IMPORTANT: provide base imports so merged code still works
+        combined_parts.append("import os\n")
 
         for file in uploaded_files:
             filename = file.filename
 
-            # Only analyze Python files
             if not filename.endswith('.py'):
                 continue
 
             content = file.read().decode('utf-8', errors='ignore')
 
-            # add filename markers (helps debugging)
-            combined_code.append(f"\n# ===== FILE: {filename} =====\n")
-            combined_code.append(content)
+            cleaned_lines = []
+            for line in content.splitlines():
+                stripped = line.strip()
 
-        if not combined_code:
-            return jsonify({'success': False, 'error': 'No Python files found'}), 400
+                # remove project imports (we embed everything together)
+                if stripped.startswith("import "):
+                    continue
+                if stripped.startswith("from "):
+                    continue
 
-        full_program = "\n".join(combined_code)
+                cleaned_lines.append(line)
+
+            cleaned_code = "\n".join(cleaned_lines)
+
+            combined_parts.append(f"\n# ===== FILE: {filename} =====\n")
+            combined_parts.append(cleaned_code)
+
+        full_program = "\n".join(combined_parts)
+
+        if not full_program.strip():
+            return jsonify({'success': False, 'error': 'No Python code found'}), 400
 
         engine = MetaCodeEngine()
         report = engine.orchestrate(full_program)
@@ -73,21 +90,20 @@ def analyze_project():
             'report': "\n\n".join(report.issues)
         })
 
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)}), 500
+    except Exception:
+        error_text = traceback.format_exc()
+        print(error_text)
+        return jsonify({'success': False, 'error': error_text}), 500
 
 
-# ---------------- Health ----------------
+# ---------------- HEALTH CHECK ----------------
 @app.route('/api/health')
 def health():
     return jsonify({'status': 'ok'})
 
 
-# ---------------- Run ----------------
+# ---------------- RUN SERVER ----------------
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     debug_mode = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
-
     app.run(host='0.0.0.0', port=port, debug=debug_mode)
