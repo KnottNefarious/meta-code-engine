@@ -18,7 +18,7 @@ class SymbolicAnalyzer:
     def __init__(self):
         self.symbols = {}
         self.functions = {}
-        self.classes = {}   # NEW: store class definitions
+        self.classes = {}
         self.issues = []
         self.symbolic_counter = 0
 
@@ -41,12 +41,12 @@ class SymbolicAnalyzer:
     # ---------------- statements ----------------
     def execute(self, node):
 
-        # register classes
+        # register class
         if isinstance(node, ast.ClassDef):
             self.classes[node.name] = node
             return
 
-        # register functions
+        # register function
         if isinstance(node, ast.FunctionDef):
             self.functions[node.name] = node
             return
@@ -54,16 +54,13 @@ class SymbolicAnalyzer:
         # assignment
         if isinstance(node, ast.Assign):
 
-            # attribute assignment
             if isinstance(node.targets[0], ast.Attribute):
                 obj = self.evaluate(node.targets[0].value)
                 value = self.evaluate(node.value)
-
                 if isinstance(obj, SymbolicValue):
                     obj.attributes[node.targets[0].attr] = value
                 return
 
-            # variable assignment
             if isinstance(node.targets[0], ast.Name):
                 self.symbols[node.targets[0].id] = self.evaluate(node.value)
             return
@@ -79,47 +76,63 @@ class SymbolicAnalyzer:
         if isinstance(node, ast.Constant):
             return node.value
 
-        # variable
         if isinstance(node, ast.Name):
             return self.symbols.get(node.id, None)
 
-        # attribute access
         if isinstance(node, ast.Attribute):
             obj = self.evaluate(node.value)
             if isinstance(obj, SymbolicValue):
                 return obj.attributes.get(node.attr, None)
             return None
 
-        # ---------- function / class calls ----------
+        # ---------- CALLS ----------
         if isinstance(node, ast.Call):
 
-            # input source
+            # SOURCE
             if isinstance(node.func, ast.Name) and node.func.id == "input":
                 return self.new_symbol()
 
             # ---------- CLASS INSTANTIATION ----------
             if isinstance(node.func, ast.Name) and node.func.id in self.classes:
                 class_def = self.classes[node.func.id]
-
                 obj = SymbolicValue(node.func.id)
 
-                # execute __init__
                 for stmt in class_def.body:
                     if isinstance(stmt, ast.FunctionDef) and stmt.name == "__init__":
-
-                        saved_symbols = self.symbols
-                        local_symbols = self.symbols.copy()
-                        local_symbols["self"] = obj
-                        self.symbols = local_symbols
+                        saved = self.symbols
+                        local = self.symbols.copy()
+                        local["self"] = obj
+                        self.symbols = local
 
                         for init_stmt in stmt.body:
                             self.execute(init_stmt)
 
-                        self.symbols = saved_symbols
+                        self.symbols = saved
 
                 return obj
 
-            # ---------- SQL sink ----------
+            # ---------- USER FUNCTION CALL ----------
+            if isinstance(node.func, ast.Name) and node.func.id in self.functions:
+
+                func = self.functions[node.func.id]
+
+                saved_symbols = self.symbols
+                local_symbols = self.symbols.copy()
+
+                # pass arguments into parameters
+                for param, arg in zip(func.args.args, node.args):
+                    local_symbols[param.arg] = self.evaluate(arg)
+
+                self.symbols = local_symbols
+
+                # execute function body
+                for stmt in func.body:
+                    self.execute(stmt)
+
+                self.symbols = saved_symbols
+                return None
+
+            # ---------- METHOD / SQL / SINK ----------
             if isinstance(node.func, ast.Attribute):
                 method = node.func.attr
                 for arg in node.args:
@@ -132,7 +145,7 @@ class SymbolicAnalyzer:
                         self.issues.append(f"Tainted data reaches '{method}' → code execution risk")
                 return None
 
-            # direct dangerous calls
+            # ---------- DIRECT DANGEROUS ----------
             if isinstance(node.func, ast.Name):
                 for arg in node.args:
                     val = self.evaluate(arg)
@@ -142,11 +155,10 @@ class SymbolicAnalyzer:
                         )
                 return None
 
-        # binary operations propagate taint
+        # propagate taint through expressions
         if isinstance(node, ast.BinOp):
             left = self.evaluate(node.left)
             right = self.evaluate(node.right)
-
             if isinstance(left, SymbolicValue) or isinstance(right, SymbolicValue):
                 return SymbolicValue("expr", tainted=True)
 
