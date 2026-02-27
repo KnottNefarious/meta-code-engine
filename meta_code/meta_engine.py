@@ -2,6 +2,68 @@ import ast
 import zlib
 
 
+# ---------- Symbolic Reasoning Layer (NEW) ----------
+class SymbolicAnalyzer(ast.NodeVisitor):
+    def __init__(self):
+        self.symbols = {}
+        self.issues = []
+
+    # Track variable assignments: x = something
+    def visit_Assign(self, node):
+        if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            name = node.targets[0].id
+            value = self.evaluate(node.value)
+            self.symbols[name] = value
+
+        self.generic_visit(node)
+
+    # Detect using variables before they exist
+    def visit_Name(self, node):
+        if isinstance(node.ctx, ast.Load):
+            if node.id not in self.symbols:
+                self.issues.append(f"Variable '{node.id}' used before assignment")
+
+    # Detect always-true or always-false conditions
+    def visit_If(self, node):
+        condition = self.evaluate(node.test)
+
+        if condition is True:
+            self.issues.append("If condition is always TRUE")
+        elif condition is False:
+            self.issues.append("If condition is always FALSE")
+
+        self.generic_visit(node)
+
+    # Evaluate simple expressions
+    def evaluate(self, node):
+
+        # numeric or string constant
+        if isinstance(node, ast.Constant):
+            return node.value
+
+        # variable reference
+        if isinstance(node, ast.Name):
+            return self.symbols.get(node.id, None)
+
+        # math operations
+        if isinstance(node, ast.BinOp):
+            left = self.evaluate(node.left)
+            right = self.evaluate(node.right)
+
+            if left is not None and right is not None:
+                if isinstance(node.op, ast.Add):
+                    return left + right
+                if isinstance(node.op, ast.Sub):
+                    return left - right
+                if isinstance(node.op, ast.Mult):
+                    return left * right
+                if isinstance(node.op, ast.Div):
+                    return left / right
+
+        return None
+
+
+# ---------- Report Object ----------
 class AnalysisReport:
     def __init__(self, issues, complexity_metrics, structural_analysis, resolution_predictions):
         self.issues = issues
@@ -10,6 +72,7 @@ class AnalysisReport:
         self.resolution_predictions = resolution_predictions
 
 
+# ---------- Main Engine ----------
 class MetaCodeEngine:
     def __init__(self):
         pass
@@ -30,7 +93,12 @@ class MetaCodeEngine:
                 []
             )
 
-        # ---------- 2. Simple Static Analysis ----------
+        # ---------- 2. Symbolic Reasoning (NEW STEP) ----------
+        analyzer = SymbolicAnalyzer()
+        analyzer.visit(tree)
+        issues.extend(analyzer.issues)
+
+        # ---------- 3. Static Pattern Analysis ----------
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 issues.append("Import detected (check security).")
@@ -38,7 +106,7 @@ class MetaCodeEngine:
             if isinstance(node, ast.While):
                 issues.append("While loop detected (possible infinite loop).")
 
-        # ---------- 3. Complexity ----------
+        # ---------- 4. Complexity ----------
         raw_size = len(code.encode())
         compressed = zlib.compress(code.encode())
         compressed_size = len(compressed)
@@ -54,7 +122,7 @@ class MetaCodeEngine:
             },
         }
 
-        # ---------- 4. Structural Analysis ----------
+        # ---------- 5. Structural Analysis ----------
         max_depth = 0
 
         def depth(node, level=0):
@@ -76,7 +144,7 @@ class MetaCodeEngine:
             "node_type_distribution": node_counts,
         }
 
-        # ---------- 5. Resolution Suggestions ----------
+        # ---------- 6. Suggestions ----------
         if not issues:
             resolution_predictions.append({
                 "issue": "No major problems detected",
