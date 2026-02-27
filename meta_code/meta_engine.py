@@ -4,6 +4,15 @@ DANGEROUS_CALLS = {"eval", "exec"}
 DANGEROUS_METHODS = {"system", "popen", "Popen"}
 SQL_SINKS = {"execute", "executemany"}
 
+FIX_SUGGESTIONS = {
+    "system": "Avoid os.system with user input. Use subprocess.run([...], shell=False) and pass arguments as a list.",
+    "popen": "Avoid executing shell commands with user input. Use subprocess.run with validated arguments.",
+    "Popen": "Avoid executing shell commands with user input. Use subprocess.run with shell=False.",
+    "eval": "Never execute user input with eval(). Parse or validate the data instead (e.g., JSON parsing).",
+    "exec": "Do not execute dynamic code from user input. Redesign logic to interpret commands safely.",
+    "sql": "Use parameterized queries: cursor.execute('SELECT * FROM users WHERE name=?', (name,))"
+}
+
 
 class SymbolicValue:
     def __init__(self, name, tainted=False, path=None):
@@ -19,9 +28,6 @@ class SymbolicValue:
 
     def add_step(self, step):
         self.path.append(step)
-
-    def __repr__(self):
-        return f"Symbolic({self.name}, tainted={self.tainted})"
 
 
 class SymbolicAnalyzer:
@@ -62,17 +68,15 @@ class SymbolicAnalyzer:
 
         if isinstance(node, ast.Assign):
 
-            # attribute assignment
             if isinstance(node.targets[0], ast.Attribute):
                 obj = self.evaluate(node.targets[0].value)
                 value = self.evaluate(node.value)
 
                 if isinstance(obj, SymbolicValue) and isinstance(value, SymbolicValue):
-                    value.add_step(f"{node.targets[0].attr}")
+                    value.add_step(node.targets[0].attr)
                     obj.attributes[node.targets[0].attr] = value
                 return
 
-            # variable assignment
             if isinstance(node.targets[0], ast.Name):
                 value = self.evaluate(node.value)
                 if isinstance(value, SymbolicValue):
@@ -98,11 +102,10 @@ class SymbolicAnalyzer:
             if isinstance(obj, SymbolicValue):
                 val = obj.attributes.get(node.attr, None)
                 if isinstance(val, SymbolicValue):
-                    val.add_step(f"{node.attr}")
+                    val.add_step(node.attr)
                 return val
             return None
 
-        # ---------- CALLS ----------
         if isinstance(node, ast.Call):
 
             # SOURCE
@@ -153,13 +156,16 @@ class SymbolicAnalyzer:
                     val = self.evaluate(arg)
 
                     if isinstance(val, SymbolicValue) and val.tainted:
+
                         if method in DANGEROUS_METHODS:
                             trace = " → ".join(val.path + [method])
-                            self.issues.append(f"Command execution path: {trace}")
+                            fix = FIX_SUGGESTIONS.get(method, "Validate user input before use.")
+                            self.issues.append(f"Command execution path: {trace}\nSuggested fix: {fix}")
 
                         if method in SQL_SINKS:
                             trace = " → ".join(val.path + [method])
-                            self.issues.append(f"SQL injection path: {trace}")
+                            fix = FIX_SUGGESTIONS["sql"]
+                            self.issues.append(f"SQL injection path: {trace}\nSuggested fix: {fix}")
                 return None
 
             # DIRECT DANGEROUS
@@ -168,10 +174,10 @@ class SymbolicAnalyzer:
                     val = self.evaluate(arg)
                     if isinstance(val, SymbolicValue) and val.tainted and node.func.id in DANGEROUS_CALLS:
                         trace = " → ".join(val.path + [node.func.id])
-                        self.issues.append(f"Code execution path: {trace}")
+                        fix = FIX_SUGGESTIONS[node.func.id]
+                        self.issues.append(f"Code execution path: {trace}\nSuggested fix: {fix}")
                 return None
 
-        # taint propagation
         if isinstance(node, ast.BinOp):
             left = self.evaluate(node.left)
             right = self.evaluate(node.right)
@@ -189,7 +195,7 @@ class AnalysisReport:
         self.complexity_metrics = {}
         self.structural_analysis = {}
         self.resolution_predictions = [
-            {"issue": i, "suggestion": "Investigate this data flow", "convergence": False}
+            {"issue": i, "suggestion": "Follow the suggested fix.", "convergence": False}
             for i in issues
         ]
 
