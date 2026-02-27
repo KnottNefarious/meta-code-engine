@@ -1,11 +1,11 @@
 import ast
 import zlib
 
+MAX_LOOP_ITERATIONS = 12
 
-# ---------- Symbolic Reasoning Layer ----------
-class SymbolicAnalyzer(ast.NodeVisitor):
+
+class SymbolicAnalyzer:
     def __init__(self):
-        # Preloaded Python built-ins
         self.symbols = {
             "print": "builtin",
             "len": "builtin",
@@ -22,67 +22,128 @@ class SymbolicAnalyzer(ast.NodeVisitor):
             "max": "builtin",
             "sum": "builtin"
         }
+
+        self.functions = {}
         self.issues = []
 
-    # Track assignments
-    def visit_Assign(self, node):
-        if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
-            name = node.targets[0].id
-            value = self.evaluate(node.value)
-            self.symbols[name] = value
-        self.generic_visit(node)
+    def run(self, tree):
+        for stmt in tree.body:
+            self.execute(stmt)
 
-    # Detect use before assignment
-    def visit_Name(self, node):
-        if isinstance(node.ctx, ast.Load):
-            if node.id not in self.symbols:
-                self.issues.append(f"Variable '{node.id}' used before assignment")
+    # ---------------- statements ----------------
+    def execute(self, node):
 
-    # Detect pointless conditions
-    def visit_If(self, node):
-        condition = self.evaluate(node.test)
+        # function definitions
+        if isinstance(node, ast.FunctionDef):
+            self.functions[node.name] = node
+            return
 
-        if condition is True:
-            self.issues.append("If condition is always TRUE")
-        elif condition is False:
-            self.issues.append("If condition is always FALSE")
+        # assignment
+        if isinstance(node, ast.Assign):
+            if isinstance(node.targets[0], ast.Name):
+                name = node.targets[0].id
+                value = self.evaluate(node.value)
+                self.symbols[name] = value
+            return
 
-        self.generic_visit(node)
+        # expression
+        if isinstance(node, ast.Expr):
+            self.evaluate(node.value)
+            return
 
-    # Evaluate expressions
+        # if
+        if isinstance(node, ast.If):
+            condition = self.evaluate(node.test)
+
+            if condition is True:
+                self.issues.append("If condition is always TRUE")
+                for stmt in node.body:
+                    self.execute(stmt)
+
+            elif condition is False:
+                self.issues.append("If condition is always FALSE")
+                for stmt in node.orelse:
+                    self.execute(stmt)
+
+            else:
+                saved = self.symbols.copy()
+                for stmt in node.body:
+                    self.execute(stmt)
+                self.symbols = saved
+                for stmt in node.orelse:
+                    self.execute(stmt)
+            return
+
+        # ----------- FIXED WHILE LOOP -----------
+        if isinstance(node, ast.While):
+
+            iteration = 0
+            last_condition = None
+
+            while iteration < MAX_LOOP_ITERATIONS:
+
+                condition = self.evaluate(node.test)
+
+                # loop exits
+                if condition is False:
+                    return
+
+                # true forever detection
+                if condition is True and last_condition is True and iteration > 3:
+                    self.issues.append("Possible infinite loop: condition never becomes FALSE")
+                    return
+
+                last_condition = condition
+
+                # execute body
+                previous_state = self.symbols.copy()
+                for stmt in node.body:
+                    self.execute(stmt)
+
+                # detect no change
+                if previous_state == self.symbols:
+                    self.issues.append("Possible infinite loop: loop body does not modify state")
+                    return
+
+                iteration += 1
+
+            self.issues.append("Loop exceeded symbolic reasoning depth (possible unbounded loop)")
+            return
+
+    # ---------------- expressions ----------------
     def evaluate(self, node):
 
-        # constants
         if isinstance(node, ast.Constant):
             return node.value
 
-        # variable lookup
         if isinstance(node, ast.Name):
-            return self.symbols.get(node.id, None)
+            if node.id not in self.symbols:
+                self.issues.append(f"Variable '{node.id}' used before assignment")
+                return None
+            return self.symbols[node.id]
 
-        # math operations
         if isinstance(node, ast.BinOp):
             left = self.evaluate(node.left)
             right = self.evaluate(node.right)
-
             if left is not None and right is not None:
-                if isinstance(node.op, ast.Add):
-                    return left + right
-                if isinstance(node.op, ast.Sub):
-                    return left - right
-                if isinstance(node.op, ast.Mult):
-                    return left * right
-                if isinstance(node.op, ast.Div):
-                    return left / right
+                try:
+                    if isinstance(node.op, ast.Add):
+                        return left + right
+                    if isinstance(node.op, ast.Sub):
+                        return left - right
+                    if isinstance(node.op, ast.Mult):
+                        return left * right
+                    if isinstance(node.op, ast.Div):
+                        return left / right
+                except Exception:
+                    self.issues.append("Invalid arithmetic operation between incompatible types")
+                    return None
 
-        # -------- NEW: logical comparison reasoning --------
         if isinstance(node, ast.Compare):
             left = self.evaluate(node.left)
             right = self.evaluate(node.comparators[0])
-
             if left is not None and right is not None:
                 op = node.ops[0]
-
                 if isinstance(op, ast.Gt):
                     return left > right
                 if isinstance(op, ast.Lt):
@@ -96,10 +157,39 @@ class SymbolicAnalyzer(ast.NodeVisitor):
                 if isinstance(op, ast.LtE):
                     return left <= right
 
+        if isinstance(node, ast.Call):
+
+            # builtin
+            if isinstance(node.func, ast.Name) and node.func.id in self.symbols:
+                for arg in node.args:
+                    self.evaluate(arg)
+                return None
+
+            # user function
+            if isinstance(node.func, ast.Name) and node.func.id in self.functions:
+                func = self.functions[node.func.id]
+
+                local = self.symbols.copy()
+                for param, arg in zip(func.args.args, node.args):
+                    local[param.arg] = self.evaluate(arg)
+
+                saved = self.symbols
+                self.symbols = local
+
+                ret = None
+                for stmt in func.body:
+                    if isinstance(stmt, ast.Return):
+                        ret = self.evaluate(stmt.value)
+                        break
+                    else:
+                        self.execute(stmt)
+
+                self.symbols = saved
+                return ret
+
         return None
 
 
-# ---------- Report ----------
 class AnalysisReport:
     def __init__(self, issues, complexity_metrics, structural_analysis, resolution_predictions):
         self.issues = issues
@@ -108,78 +198,24 @@ class AnalysisReport:
         self.resolution_predictions = resolution_predictions
 
 
-# ---------- Main Engine ----------
 class MetaCodeEngine:
-    def __init__(self):
-        pass
-
     def orchestrate(self, code):
         issues = []
         resolution_predictions = []
 
-        # Syntax check
         try:
             tree = ast.parse(code)
         except SyntaxError as e:
             issues.append(f"Syntax error: {e}")
-            return AnalysisReport(
-                issues,
-                {"raw_size": len(code), "compressed_size": 0, "ratio": 0, "patterns": {}},
-                {"depth": 0, "branching_factor": 0, "node_type_distribution": {}},
-                []
-            )
+            return AnalysisReport(issues, {}, {}, [])
 
-        # Symbolic reasoning
         analyzer = SymbolicAnalyzer()
-        analyzer.visit(tree)
+        analyzer.run(tree)
         issues.extend(analyzer.issues)
 
-        # Pattern detection
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                issues.append("Import detected (check security).")
-            if isinstance(node, ast.While):
-                issues.append("While loop detected (possible infinite loop).")
+        complexity_metrics = {"lines": len(code.splitlines())}
+        structural_analysis = {}
 
-        # Complexity
-        raw_size = len(code.encode())
-        compressed = zlib.compress(code.encode())
-        compressed_size = len(compressed)
-        ratio = compressed_size / raw_size if raw_size > 0 else 0
-
-        complexity_metrics = {
-            "raw_size": raw_size,
-            "compressed_size": compressed_size,
-            "ratio": round(ratio, 3),
-            "patterns": {
-                "lines": len(code.splitlines()),
-                "functions": sum(isinstance(n, ast.FunctionDef) for n in ast.walk(tree)),
-            },
-        }
-
-        # Structural analysis
-        max_depth = 0
-
-        def depth(node, level=0):
-            nonlocal max_depth
-            max_depth = max(max_depth, level)
-            for child in ast.iter_child_nodes(node):
-                depth(child, level + 1)
-
-        depth(tree)
-
-        node_counts = {}
-        for n in ast.walk(tree):
-            name = type(n).__name__
-            node_counts[name] = node_counts.get(name, 0) + 1
-
-        structural_analysis = {
-            "depth": max_depth,
-            "branching_factor": round(len(node_counts) / (max_depth + 1), 2),
-            "node_type_distribution": node_counts,
-        }
-
-        # Suggestions
         if not issues:
             resolution_predictions.append({
                 "issue": "No major problems detected",
@@ -194,9 +230,4 @@ class MetaCodeEngine:
                     "convergence": False
                 })
 
-        return AnalysisReport(
-            issues,
-            complexity_metrics,
-            structural_analysis,
-            resolution_predictions
-        )
+        return AnalysisReport(issues, complexity_metrics, structural_analysis, resolution_predictions)
