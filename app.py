@@ -3,7 +3,8 @@ import ast
 import io
 import zipfile
 import traceback
-import requests
+import urllib.request
+
 from flask import Flask, render_template, request, jsonify
 from meta_code.meta_engine import MetaCodeEngine
 
@@ -56,12 +57,13 @@ def analyze_repo():
 
         zip_url = f"https://github.com/{user}/{repo}/archive/refs/heads/main.zip"
 
-        # download repo zip
-        response = requests.get(zip_url, timeout=30)
-        if response.status_code != 200:
-            return jsonify({'success': False, 'error': 'Could not download repository'}), 400
+        # DOWNLOAD USING BUILT-IN PYTHON (NO REQUESTS LIBRARY)
+        try:
+            response = urllib.request.urlopen(zip_url, timeout=30)
+            zip_bytes = io.BytesIO(response.read())
+        except Exception:
+            return jsonify({'success': False, 'error': 'Could not download repository (check repo exists and is public)'}), 400
 
-        zip_bytes = io.BytesIO(response.content)
         z = zipfile.ZipFile(zip_bytes)
 
         definitions = []
