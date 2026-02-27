@@ -1,6 +1,7 @@
 import ast
 
-DANGEROUS_CALLS = {"eval", "exec", "os.system"}
+DANGEROUS_CALLS = {"eval", "exec"}
+DANGEROUS_METHODS = {"system", "popen", "Popen"}
 SQL_SINKS = {"execute", "executemany"}
 
 
@@ -9,6 +10,11 @@ class SymbolicValue:
         self.name = name
         self.tainted = tainted
         self.attributes = {}
+
+    def copy(self):
+        new = SymbolicValue(self.name, self.tainted)
+        new.attributes = dict(self.attributes)
+        return new
 
     def __repr__(self):
         return f"Symbolic({self.name}, tainted={self.tainted})"
@@ -28,7 +34,8 @@ class SymbolicAnalyzer:
 
     def clone(self):
         new = SymbolicAnalyzer()
-        new.symbols = {k: v for k, v in self.symbols.items()}
+        new.symbols = {k: (v.copy() if isinstance(v, SymbolicValue) else v)
+                       for k, v in self.symbols.items()}
         new.functions = self.functions
         new.classes = self.classes
         new.symbolic_counter = self.symbolic_counter
@@ -41,17 +48,14 @@ class SymbolicAnalyzer:
     # ---------------- statements ----------------
     def execute(self, node):
 
-        # register class
         if isinstance(node, ast.ClassDef):
             self.classes[node.name] = node
             return
 
-        # register function
         if isinstance(node, ast.FunctionDef):
             self.functions[node.name] = node
             return
 
-        # assignment
         if isinstance(node, ast.Assign):
 
             if isinstance(node.targets[0], ast.Attribute):
@@ -65,7 +69,48 @@ class SymbolicAnalyzer:
                 self.symbols[node.targets[0].id] = self.evaluate(node.value)
             return
 
-        # expression
+        if isinstance(node, ast.If):
+
+            # allowlist validation
+            if isinstance(node.test, ast.Compare):
+                left = node.test.left
+                op = node.test.ops[0]
+                right = node.test.comparators[0]
+
+                if (
+                    isinstance(left, ast.Name)
+                    and isinstance(op, ast.In)
+                    and isinstance(right, (ast.List, ast.Tuple))
+                ):
+                    true_branch = self.clone()
+                    false_branch = self.clone()
+
+                    sym = true_branch.symbols.get(left.id)
+                    if isinstance(sym, SymbolicValue):
+                        sym.tainted = False
+
+                    for s in node.body:
+                        true_branch.execute(s)
+
+                    for s in node.orelse:
+                        false_branch.execute(s)
+
+                    self.issues.extend(true_branch.issues)
+                    self.issues.extend(false_branch.issues)
+                    return
+
+            true_branch = self.clone()
+            false_branch = self.clone()
+
+            for s in node.body:
+                true_branch.execute(s)
+            for s in node.orelse:
+                false_branch.execute(s)
+
+            self.issues.extend(true_branch.issues)
+            self.issues.extend(false_branch.issues)
+            return
+
         if isinstance(node, ast.Expr):
             self.evaluate(node.value)
             return
@@ -92,7 +137,7 @@ class SymbolicAnalyzer:
             if isinstance(node.func, ast.Name) and node.func.id == "input":
                 return self.new_symbol()
 
-            # ---------- CLASS INSTANTIATION ----------
+            # CLASS CONSTRUCTOR
             if isinstance(node.func, ast.Name) and node.func.id in self.classes:
                 class_def = self.classes[node.func.id]
                 obj = SymbolicValue(node.func.id)
@@ -108,54 +153,47 @@ class SymbolicAnalyzer:
                             self.execute(init_stmt)
 
                         self.symbols = saved
-
                 return obj
 
-            # ---------- USER FUNCTION CALL ----------
+            # USER FUNCTION
             if isinstance(node.func, ast.Name) and node.func.id in self.functions:
-
                 func = self.functions[node.func.id]
 
-                saved_symbols = self.symbols
-                local_symbols = self.symbols.copy()
+                saved = self.symbols
+                local = self.symbols.copy()
 
-                # pass arguments into parameters
                 for param, arg in zip(func.args.args, node.args):
-                    local_symbols[param.arg] = self.evaluate(arg)
+                    local[param.arg] = self.evaluate(arg)
 
-                self.symbols = local_symbols
-
-                # execute function body
+                self.symbols = local
                 for stmt in func.body:
                     self.execute(stmt)
-
-                self.symbols = saved_symbols
+                self.symbols = saved
                 return None
 
-            # ---------- METHOD / SQL / SINK ----------
+            # ---------- ATTRIBUTE CALL (MOST IMPORTANT FIX) ----------
             if isinstance(node.func, ast.Attribute):
                 method = node.func.attr
+
                 for arg in node.args:
                     val = self.evaluate(arg)
 
                     if method in SQL_SINKS and isinstance(val, SymbolicValue) and val.tainted:
                         self.issues.append("SQL injection risk: tainted data in database query")
 
-                    if method in DANGEROUS_CALLS and isinstance(val, SymbolicValue) and val.tainted:
-                        self.issues.append(f"Tainted data reaches '{method}' → code execution risk")
+                    if method in DANGEROUS_METHODS and isinstance(val, SymbolicValue) and val.tainted:
+                        self.issues.append(f"Tainted data reaches '{method}' → command execution risk")
                 return None
 
-            # ---------- DIRECT DANGEROUS ----------
+            # DIRECT DANGEROUS
             if isinstance(node.func, ast.Name):
                 for arg in node.args:
                     val = self.evaluate(arg)
                     if node.func.id in DANGEROUS_CALLS and isinstance(val, SymbolicValue) and val.tainted:
-                        self.issues.append(
-                            f"Tainted data reaches '{node.func.id}' → code execution risk"
-                        )
+                        self.issues.append(f"Tainted data reaches '{node.func.id}' → code execution risk")
                 return None
 
-        # propagate taint through expressions
+        # taint propagation
         if isinstance(node, ast.BinOp):
             left = self.evaluate(node.left)
             right = self.evaluate(node.right)
