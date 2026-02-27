@@ -51,12 +51,16 @@ class SymbolicAnalyzer(ast.NodeVisitor):
 
     # Evaluate expressions
     def evaluate(self, node):
+
+        # constants
         if isinstance(node, ast.Constant):
             return node.value
 
+        # variable lookup
         if isinstance(node, ast.Name):
             return self.symbols.get(node.id, None)
 
+        # math operations
         if isinstance(node, ast.BinOp):
             left = self.evaluate(node.left)
             right = self.evaluate(node.right)
@@ -70,6 +74,27 @@ class SymbolicAnalyzer(ast.NodeVisitor):
                     return left * right
                 if isinstance(node.op, ast.Div):
                     return left / right
+
+        # -------- NEW: logical comparison reasoning --------
+        if isinstance(node, ast.Compare):
+            left = self.evaluate(node.left)
+            right = self.evaluate(node.comparators[0])
+
+            if left is not None and right is not None:
+                op = node.ops[0]
+
+                if isinstance(op, ast.Gt):
+                    return left > right
+                if isinstance(op, ast.Lt):
+                    return left < right
+                if isinstance(op, ast.Eq):
+                    return left == right
+                if isinstance(op, ast.NotEq):
+                    return left != right
+                if isinstance(op, ast.GtE):
+                    return left >= right
+                if isinstance(op, ast.LtE):
+                    return left <= right
 
         return None
 
