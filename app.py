@@ -1,5 +1,4 @@
 import os
-
 from flask import Flask, render_template, request, jsonify
 from meta_code.meta_engine import MetaCodeEngine
 
@@ -8,6 +7,7 @@ app = Flask(__name__)
 @app.route('/')
 def home():
     return render_template('index.html')
+
 
 @app.route('/api/analyze', methods=['POST'])
 def analyze():
@@ -53,6 +53,8 @@ def analyze():
         })
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -62,7 +64,6 @@ def health():
 
 
 if __name__ == '__main__':
-    # 🔥 Replit-safe dynamic port handling
     port = int(os.environ.get("PORT", 5000))
     debug_mode = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
 
