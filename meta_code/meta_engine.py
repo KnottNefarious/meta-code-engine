@@ -1,8 +1,6 @@
 import ast
 
 MAX_LOOP_ITERATIONS = 8
-
-# dangerous functions (sinks)
 DANGEROUS_CALLS = {"eval", "exec", "os.system"}
 
 
@@ -19,17 +17,18 @@ class SymbolicValue:
 class SymbolicAnalyzer:
     def __init__(self):
         self.symbols = {}
+        self.functions = {}
         self.issues = []
         self.symbolic_counter = 0
 
     def new_symbol(self):
         self.symbolic_counter += 1
-        # input is always tainted
         return SymbolicValue(f"input_{self.symbolic_counter}", tainted=True)
 
     def clone(self):
         new = SymbolicAnalyzer()
         new.symbols = {k: v for k, v in self.symbols.items()}
+        new.functions = self.functions
         new.symbolic_counter = self.symbolic_counter
         return new
 
@@ -40,7 +39,12 @@ class SymbolicAnalyzer:
     # ---------------- statements ----------------
     def execute(self, node):
 
-        # assignment propagation
+        # function definition
+        if isinstance(node, ast.FunctionDef):
+            self.functions[node.name] = node
+            return
+
+        # assignment
         if isinstance(node, ast.Assign):
             if isinstance(node.targets[0], ast.Name):
                 value = self.evaluate(node.value)
@@ -52,7 +56,7 @@ class SymbolicAnalyzer:
             self.evaluate(node.value)
             return
 
-        # IF (string privilege check)
+        # if privilege check
         if isinstance(node, ast.If):
             if isinstance(node.test, ast.Compare):
                 left = node.test.left
@@ -89,32 +93,48 @@ class SymbolicAnalyzer:
         if isinstance(node, ast.Constant):
             return node.value
 
-        # variable lookup
         if isinstance(node, ast.Name):
             if node.id not in self.symbols:
                 self.issues.append(f"Variable '{node.id}' used before assignment")
                 return None
             return self.symbols[node.id]
 
-        # function calls
+        # ---------- function calls ----------
         if isinstance(node, ast.Call):
 
-            # SOURCE: input()
+            # SOURCE
             if isinstance(node.func, ast.Name) and node.func.id == "input":
                 return self.new_symbol()
 
-            # propagate taint through int()
+            # propagate through int()
             if isinstance(node.func, ast.Name) and node.func.id == "int":
                 val = self.evaluate(node.args[0])
                 return val
 
-            # print safe
-            if isinstance(node.func, ast.Name) and node.func.id == "print":
-                for arg in node.args:
-                    self.evaluate(arg)
+            # ---------- user defined function ----------
+            if isinstance(node.func, ast.Name) and node.func.id in self.functions:
+
+                func = self.functions[node.func.id]
+
+                # create local scope
+                local_symbols = self.symbols.copy()
+
+                # map arguments to parameters
+                for param, arg in zip(func.args.args, node.args):
+                    arg_value = self.evaluate(arg)
+                    local_symbols[param.arg] = arg_value
+
+                # run function body with local scope
+                saved_symbols = self.symbols
+                self.symbols = local_symbols
+
+                for stmt in func.body:
+                    self.execute(stmt)
+
+                self.symbols = saved_symbols
                 return None
 
-            # ---------- SINK DETECTION ----------
+            # ---------- sink detection ----------
             if isinstance(node.func, ast.Name):
                 func_name = node.func.id
 
@@ -123,8 +143,14 @@ class SymbolicAnalyzer:
                         val = self.evaluate(arg)
                         if isinstance(val, SymbolicValue) and val.tainted:
                             self.issues.append(
-                                f"Tainted input reaches dangerous function '{func_name}' → code injection possible"
+                                f"Tainted input reaches dangerous function '{func_name}' → code execution path found"
                             )
+                return None
+
+            # print
+            if isinstance(node.func, ast.Name) and node.func.id == "print":
+                for arg in node.args:
+                    self.evaluate(arg)
                 return None
 
         # arithmetic
