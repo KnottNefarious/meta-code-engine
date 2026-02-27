@@ -4,7 +4,8 @@ DANGEROUS_CALLS = {"eval", "exec"}
 OS_COMMAND_METHODS = {"system", "popen"}
 SUBPROCESS_METHODS = {"Popen", "run", "call"}
 SQL_METHODS = {"execute", "executemany"}
-DESERIALIZE_METHODS = {"loads", "load"}  # pickle, yaml, marshal
+DESERIALIZE_METHODS = {"loads", "load"}
+FILE_METHODS = {"open"}  # path traversal
 REQUEST_CONTAINERS = {"args", "form", "json", "values", "headers", "cookies", "data"}
 
 
@@ -91,40 +92,6 @@ class SymbolicAnalyzer:
                     return True
         return False
 
-    def execute_method(self, obj, method_name, args):
-        if obj.class_name not in self.classes:
-            return None
-
-        class_node = self.classes[obj.class_name]
-
-        for item in class_node.body:
-            if isinstance(item, ast.FunctionDef) and item.name == method_name:
-
-                saved_symbols = self.symbols
-                saved_return = self.return_value
-
-                local = {}
-                local["self"] = obj
-
-                params = item.args.args[1:]
-                for param, arg in zip(params, args):
-                    val = self.evaluate(arg)
-                    if isinstance(val, SymbolicValue):
-                        val.add_step(f"param:{param.arg}")
-                    local[param.arg] = val
-
-                self.symbols = local
-                self.return_value = None
-
-                self.execute_block(item.body)
-
-                ret = self.return_value
-
-                self.symbols = saved_symbols
-                self.return_value = saved_return
-
-                return ret
-
     def evaluate(self, node):
 
         if node is None:
@@ -135,6 +102,16 @@ class SymbolicAnalyzer:
 
         if isinstance(node, ast.Name):
             return self.symbols.get(node.id, None)
+
+        # open(tainted_path)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id == "open":
+                for arg in node.args:
+                    val = self.evaluate(arg)
+                    if isinstance(val, SymbolicValue) and val.tainted:
+                        trace = " → ".join(val.path + ["file open"])
+                        self.issues.append(f"Path traversal / arbitrary file read: {trace}")
+                return None
 
         # class instantiation
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
@@ -157,13 +134,6 @@ class SymbolicAnalyzer:
                     sym = self.new_symbol("request")
                     sym.add_step(node.func.attr)
                     return sym
-
-                obj = self.evaluate(node.func.value)
-
-                if isinstance(obj, SymbolicValue) and obj.class_name:
-                    ret = self.execute_method(obj, node.func.attr, node.args)
-                    if ret:
-                        return ret
 
                 method = node.func.attr
 
@@ -189,7 +159,7 @@ class SymbolicAnalyzer:
                         trace = " → ".join(val.path + ["SQL execute"])
                         self.issues.append(f"SQL injection path: {trace}")
 
-                    # DESERIALIZATION RCE
+                    # unsafe deserialization
                     if isinstance(val, SymbolicValue) and val.tainted and method in DESERIALIZE_METHODS:
                         trace = " → ".join(val.path + ["unsafe deserialization"])
                         self.issues.append(f"Deserialization RCE path: {trace}")
