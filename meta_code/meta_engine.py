@@ -1,23 +1,23 @@
 import ast
 
-# Dangerous execution sinks
 DANGEROUS_CALLS = {"eval", "exec"}
 OS_COMMAND_METHODS = {"system", "popen"}
 SUBPROCESS_METHODS = {"Popen", "run", "call"}
+REQUEST_CONTAINERS = {"args", "form", "json", "values", "headers", "cookies", "data"}
 
 
-# ---------------- SYMBOLIC VALUE ----------------
 class SymbolicValue:
-    def __init__(self, name, tainted=False, path=None):
+    def __init__(self, name, tainted=False, path=None, class_name=None):
         self.name = name
         self.tainted = tainted
         self.path = path or [name]
+        self.class_name = class_name
 
     def copy(self):
-        return SymbolicValue(self.name, self.tainted, list(self.path))
+        return SymbolicValue(self.name, self.tainted, list(self.path), self.class_name)
 
     def merge(self, other):
-        merged = SymbolicValue(self.name, self.tainted or other.tainted, list(self.path))
+        merged = SymbolicValue(self.name, self.tainted or other.tainted, list(self.path), self.class_name)
         merged.path = list(dict.fromkeys(self.path + other.path))
         return merged
 
@@ -25,11 +25,11 @@ class SymbolicValue:
         self.path.append(step)
 
 
-# ---------------- SYMBOLIC ANALYZER ----------------
 class SymbolicAnalyzer:
     def __init__(self):
         self.symbols = {}
         self.functions = {}
+        self.classes = {}
         self.issues = []
         self.symbolic_counter = 0
         self.return_value = None
@@ -38,13 +38,11 @@ class SymbolicAnalyzer:
         self.symbolic_counter += 1
         return SymbolicValue(f"{source}_{self.symbolic_counter}", True, [source])
 
-    # ---------------- RUN ----------------
     def run(self, tree):
-        # collect definitions
         for stmt in tree.body:
             self.execute(stmt)
 
-        # simulate web entry points
+        # simulate web entrypoints
         for func in self.functions.values():
             saved = self.symbols
             self.symbols = self.symbols.copy()
@@ -55,16 +53,19 @@ class SymbolicAnalyzer:
             self.execute_block(func.body)
             self.symbols = saved
 
-    def execute_block(self, statements):
-        for stmt in statements:
+    def execute_block(self, body):
+        for stmt in body:
             if self.execute(stmt) == "return":
                 break
 
-    # ---------------- STATEMENTS ----------------
     def execute(self, node):
 
         if isinstance(node, ast.FunctionDef):
             self.functions[node.name] = node
+            return
+
+        if isinstance(node, ast.ClassDef):
+            self.classes[node.name] = node
             return
 
         if isinstance(node, ast.Return):
@@ -82,27 +83,70 @@ class SymbolicAnalyzer:
         if isinstance(node, ast.Expr):
             self.evaluate(node.value)
 
-    # ---------------- EXPRESSIONS ----------------
+    def is_request_container(self, node):
+        if isinstance(node, ast.Attribute):
+            if isinstance(node.value, ast.Name) and node.value.id == "request":
+                if node.attr in REQUEST_CONTAINERS:
+                    return True
+        return False
+
+    def execute_method(self, obj, method_name, args):
+        if obj.class_name not in self.classes:
+            return None
+
+        class_node = self.classes[obj.class_name]
+
+        for item in class_node.body:
+            if isinstance(item, ast.FunctionDef) and item.name == method_name:
+
+                saved_symbols = self.symbols
+                saved_return = self.return_value
+
+                local = {}
+
+                # bind self
+                local["self"] = obj
+
+                # bind parameters AFTER self
+                params = item.args.args[1:]
+                for param, arg in zip(params, args):
+                    val = self.evaluate(arg)
+                    if isinstance(val, SymbolicValue):
+                        val.add_step(f"param:{param.arg}")
+                    local[param.arg] = val
+
+                self.symbols = local
+                self.return_value = None
+
+                self.execute_block(item.body)
+
+                ret = self.return_value
+
+                self.symbols = saved_symbols
+                self.return_value = saved_return
+
+                return ret
+
     def evaluate(self, node):
 
         if node is None:
             return None
 
-        # constants
         if isinstance(node, ast.Constant):
             return node.value
 
-        # variable lookup
         if isinstance(node, ast.Name):
             return self.symbols.get(node.id, None)
 
-        # Flask request.* is attacker input
-        if isinstance(node, ast.Attribute):
-            if isinstance(node.value, ast.Name) and node.value.id == "request":
-                return self.new_symbol("request")
-            return None
+        # class instantiation
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id in self.classes:
+                return SymbolicValue(node.func.id, False, [node.func.id], class_name=node.func.id)
 
-        # function calls
+        # request containers
+        if self.is_request_container(node):
+            return self.new_symbol("request")
+
         if isinstance(node, ast.Call):
 
             # input()
@@ -111,29 +155,47 @@ class SymbolicAnalyzer:
 
             # request.args.get(...)
             if isinstance(node.func, ast.Attribute):
+                if self.is_request_container(node.func.value):
+                    sym = self.new_symbol("request")
+                    sym.add_step(node.func.attr)
+                    return sym
 
-                # request.args.get(...)
-                if isinstance(node.func.value, ast.Attribute):
-                    if isinstance(node.func.value.value, ast.Name) and node.func.value.value.id == "request":
-                        sym = self.new_symbol("request")
-                        sym.add_step(node.func.attr)
-                        return sym
-
-                # propagate taint through methods
                 obj = self.evaluate(node.func.value)
-                if isinstance(obj, SymbolicValue) and obj.tainted:
-                    val = obj.copy()
-                    val.add_step(node.func.attr)
-                    return val
 
-            # user-defined function
+                # METHOD CALL
+                if isinstance(obj, SymbolicValue) and obj.class_name:
+                    ret = self.execute_method(obj, node.func.attr, node.args)
+                    if ret:
+                        return ret
+
+                # subprocess(shell=True)
+                method = node.func.attr
+                shell_true = any(
+                    kw.arg == "shell" and isinstance(kw.value, ast.Constant) and kw.value.value is True
+                    for kw in node.keywords
+                )
+
+                for arg in node.args:
+                    val = self.evaluate(arg)
+
+                    if isinstance(val, SymbolicValue) and val.tainted and method in OS_COMMAND_METHODS:
+                        trace = " → ".join(val.path + [method])
+                        self.issues.append(f"Command execution path: {trace}")
+
+                    if isinstance(val, SymbolicValue) and val.tainted and method in SUBPROCESS_METHODS and shell_true:
+                        trace = " → ".join(val.path + ["subprocess(shell=True)"])
+                        self.issues.append(f"Shell injection path: {trace}")
+
+                return None
+
+            # normal function
             if isinstance(node.func, ast.Name) and node.func.id in self.functions:
                 func = self.functions[node.func.id]
 
                 saved_symbols = self.symbols
                 saved_return = self.return_value
 
-                local = self.symbols.copy()
+                local = {}
 
                 for param, arg in zip(func.args.args, node.args):
                     val = self.evaluate(arg)
@@ -153,52 +215,7 @@ class SymbolicAnalyzer:
 
                 return ret
 
-            # ----------- DANGEROUS CALL DETECTION -----------
-
-            # detect subprocess(..., shell=True)
-            if isinstance(node.func, ast.Attribute):
-                method = node.func.attr
-
-                shell_true = False
-                for kw in node.keywords:
-                    if kw.arg == "shell":
-                        if isinstance(kw.value, ast.Constant) and kw.value.value is True:
-                            shell_true = True
-
-                for arg in node.args:
-                    val = self.evaluate(arg)
-
-                    # os.system / popen
-                    if isinstance(val, SymbolicValue) and val.tainted and method in OS_COMMAND_METHODS:
-                        trace = " → ".join(val.path + [method])
-                        self.issues.append(
-                            f"Command execution path: {trace}\n"
-                            f"Suggested fix: Never pass user input to OS commands."
-                        )
-
-                    # subprocess shell injection
-                    if isinstance(val, SymbolicValue) and val.tainted and method in SUBPROCESS_METHODS and shell_true:
-                        trace = " → ".join(val.path + ["subprocess(shell=True)"])
-                        self.issues.append(
-                            f"Shell injection path: {trace}\n"
-                            f"Suggested fix: Use subprocess.run([...], shell=False) and pass arguments as a list."
-                        )
-
-                return None
-
-            # eval/exec
-            if isinstance(node.func, ast.Name) and node.func.id in DANGEROUS_CALLS:
-                for arg in node.args:
-                    val = self.evaluate(arg)
-                    if isinstance(val, SymbolicValue) and val.tainted:
-                        trace = " → ".join(val.path + [node.func.id])
-                        self.issues.append(
-                            f"Code execution path: {trace}\n"
-                            f"Suggested fix: Never execute user-controlled code."
-                        )
-                return None
-
-        # taint merge in string building
+        # string taint
         if isinstance(node, ast.BinOp):
             left = self.evaluate(node.left)
             right = self.evaluate(node.right)
@@ -213,7 +230,6 @@ class SymbolicAnalyzer:
         return None
 
 
-# ---------------- REPORT ----------------
 class AnalysisReport:
     def __init__(self, issues):
         self.issues = issues
@@ -222,7 +238,6 @@ class AnalysisReport:
         self.resolution_predictions = []
 
 
-# ---------------- ENGINE ----------------
 class MetaCodeEngine:
     def orchestrate(self, code):
         try:
