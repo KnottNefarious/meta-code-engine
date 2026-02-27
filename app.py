@@ -4,6 +4,7 @@ import io
 import zipfile
 import traceback
 import urllib.request
+import json
 
 from flask import Flask, render_template, request, jsonify
 from meta_code.meta_engine import MetaCodeEngine
@@ -39,7 +40,7 @@ def analyze():
         return jsonify({'success': False, 'error': traceback.format_exc()}), 500
 
 
-# ---------------- GITHUB REPO ANALYSIS ----------------
+# ---------------- GITHUB REPO SCANNER ----------------
 @app.route('/api/analyze_repo', methods=['POST'])
 def analyze_repo():
     try:
@@ -55,14 +56,34 @@ def analyze_repo():
 
         user, repo = parts[0], parts[1]
 
-        zip_url = f"https://github.com/{user}/{repo}/archive/refs/heads/main.zip"
+        # ---- REQUEST WITH USER AGENT ----
+        headers = {
+            "User-Agent": "MetaCodeEngine-Scanner"
+        }
 
-        # DOWNLOAD USING BUILT-IN PYTHON (NO REQUESTS LIBRARY)
+        # 1) Ask GitHub which branch is default
         try:
-            response = urllib.request.urlopen(zip_url, timeout=30)
-            zip_bytes = io.BytesIO(response.read())
+            api_url = f"https://api.github.com/repos/{user}/{repo}"
+            req = urllib.request.Request(api_url, headers=headers)
+
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                repo_data = json.loads(resp.read().decode("utf-8"))
+
+            default_branch = repo_data.get("default_branch", "main")
+
         except Exception:
-            return jsonify({'success': False, 'error': 'Could not download repository (check repo exists and is public)'}), 400
+            return jsonify({'success': False, 'error': 'GitHub rejected metadata request (repo may not exist or rate limited)'}), 400
+
+        # 2) Download the repository zip
+        try:
+            zip_url = f"https://github.com/{user}/{repo}/archive/refs/heads/{default_branch}.zip"
+            zip_req = urllib.request.Request(zip_url, headers=headers)
+
+            with urllib.request.urlopen(zip_req, timeout=30) as resp:
+                zip_bytes = io.BytesIO(resp.read())
+
+        except Exception:
+            return jsonify({'success': False, 'error': 'Failed to download repository archive'}), 400
 
         z = zipfile.ZipFile(zip_bytes)
 
@@ -75,7 +96,6 @@ def analyze_repo():
 
             content = z.read(filename).decode("utf-8", errors="ignore")
 
-            # remove imports
             cleaned_lines = []
             for line in content.splitlines():
                 stripped = line.strip()
