@@ -12,6 +12,7 @@ from meta_code.meta_engine import MetaCodeEngine
 app = Flask(__name__)
 
 
+# ---------------- HOME ----------------
 @app.route('/')
 def home():
     return render_template('index.html')
@@ -40,7 +41,7 @@ def analyze():
         return jsonify({'success': False, 'error': traceback.format_exc()}), 500
 
 
-# ---------------- GITHUB REPO SCANNER ----------------
+# ---------------- GITHUB REPOSITORY SCANNER ----------------
 @app.route('/api/analyze_repo', methods=['POST'])
 def analyze_repo():
     try:
@@ -56,12 +57,11 @@ def analyze_repo():
 
         user, repo = parts[0], parts[1]
 
-        # ---- REQUEST WITH USER AGENT ----
         headers = {
             "User-Agent": "MetaCodeEngine-Scanner"
         }
 
-        # 1) Ask GitHub which branch is default
+        # ---- 1) Ask GitHub for default branch ----
         try:
             api_url = f"https://api.github.com/repos/{user}/{repo}"
             req = urllib.request.Request(api_url, headers=headers)
@@ -72,9 +72,9 @@ def analyze_repo():
             default_branch = repo_data.get("default_branch", "main")
 
         except Exception:
-            return jsonify({'success': False, 'error': 'GitHub rejected metadata request (repo may not exist or rate limited)'}), 400
+            return jsonify({'success': False, 'error': 'GitHub rejected metadata request (repo missing, private, or rate-limited)'}), 400
 
-        # 2) Download the repository zip
+        # ---- 2) Download repository ZIP ----
         try:
             zip_url = f"https://github.com/{user}/{repo}/archive/refs/heads/{default_branch}.zip"
             zip_req = urllib.request.Request(zip_url, headers=headers)
@@ -90,8 +90,32 @@ def analyze_repo():
         definitions = []
         top_level = []
 
+        # -------- LARGE REPOSITORY FILTER --------
+        SKIP_FOLDERS = [
+            "venv/", ".venv/", "env/",
+            "node_modules/",
+            "tests/", "test/",
+            "docs/", "examples/",
+            "build/", "dist/",
+            "__pycache__/",
+            ".git/",
+            "site-packages/"
+        ]
+
         for filename in z.namelist():
+
             if not filename.endswith(".py"):
+                continue
+
+            # Skip dependency & non-app folders
+            if any(folder in filename for folder in SKIP_FOLDERS):
+                continue
+
+            # Skip very large files (prevents crashes)
+            try:
+                if z.getinfo(filename).file_size > 200000:  # 200KB
+                    continue
+            except Exception:
                 continue
 
             content = z.read(filename).decode("utf-8", errors="ignore")
@@ -121,8 +145,9 @@ def analyze_repo():
                     top_level.append(segment)
 
         if not definitions and not top_level:
-            return jsonify({'success': False, 'error': 'No Python files found in repository'}), 400
+            return jsonify({'success': False, 'error': 'No analyzable Python application code found'}), 400
 
+        # Build virtual program
         final_program = "import os\n\n"
         final_program += "\n\n".join(definitions)
         final_program += "\n\n"
@@ -146,6 +171,7 @@ def health():
     return jsonify({'status': 'ok'})
 
 
+# ---------------- RUN ----------------
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     debug_mode = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
