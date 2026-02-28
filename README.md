@@ -87,6 +87,15 @@ Together form the classic model:
    •Source → Flow → Sink
      
 That model is exactly how professional SAST tools are designed.
+
+Capability:
+
+Taint sources.       ✔
+Propagation.         ✔
+Sanitizers.          ✔
+Overwrite detection  ✔
+Re-taint detection   ✔
+Sink analysis        ✔
 ---
 
 Example Output 📝
