@@ -10,7 +10,6 @@ REQUEST_CONTAINERS = {"args", "form", "json", "values", "headers", "cookies", "d
 HTML_KEYWORDS = {"<html", "<div", "<script", "<h1", "<body", "<span"}
 
 
-# ---------- Findings ----------
 def calculate_exploitability(vuln_type, path, sink):
     if vuln_type in {"Command Injection", "Unsafe Deserialization"}:
         return "VERY LIKELY", "direct code execution possible"
@@ -54,7 +53,6 @@ class Finding:
         )
 
 
-# ---------- Symbolic values ----------
 class SymbolicValue:
     def __init__(self, name, tainted=False, path=None):
         self.name = name
@@ -67,16 +65,12 @@ class SymbolicValue:
         return merged
 
 
-# ---------- Analyzer ----------
 class SymbolicAnalyzer:
-
     def __init__(self):
         self.symbols = {}
         self.findings = []
         self.counter = 0
         self.authorized_ids = set()
-        self.functions = {}
-        self.route_functions = set()
 
     def new_symbol(self, source="request"):
         self.counter += 1
@@ -85,18 +79,8 @@ class SymbolicAnalyzer:
     def add_finding(self, vuln_type, severity, sym, sink, reason, fix):
         self.findings.append(Finding(vuln_type, severity, sym.path, sink, reason, fix))
 
-    # ---------- ROUTE DISCOVERY ----------
-    def discover_routes(self, tree):
-        for node in tree.body:
-            if isinstance(node, ast.FunctionDef):
-                self.functions[node.name] = node
+    # -------------------- CORE EVALUATION --------------------
 
-                for dec in node.decorator_list:
-                    if isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute):
-                        if dec.func.attr == "route":
-                            self.route_functions.add(node.name)
-
-    # ---------- Expression evaluation ----------
     def eval_node(self, node):
 
         if node is None:
@@ -108,14 +92,31 @@ class SymbolicAnalyzer:
         if isinstance(node, ast.Name):
             return self.symbols.get(node.id)
 
-        # request sources
+        # -------- Authorization detection --------
+        if isinstance(node, ast.Compare):
+            left = node.left
+            right = node.comparators[0] if node.comparators else None
+
+            def is_current_user_attr(n):
+                return isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == "current_user"
+
+            if isinstance(left, ast.Name) and is_current_user_attr(right):
+                sym = self.symbols.get(left.id)
+                if isinstance(sym, SymbolicValue) and sym.tainted:
+                    self.authorized_ids.add(left.id)
+
+            if isinstance(right, ast.Name) and is_current_user_attr(left):
+                sym = self.symbols.get(right.id)
+                if isinstance(sym, SymbolicValue) and sym.tainted:
+                    self.authorized_ids.add(right.id)
+
+        # -------- Flask sources --------
         if isinstance(node, ast.Attribute):
             if isinstance(node.value, ast.Name) and node.value.id == "request":
                 if node.attr in REQUEST_CONTAINERS:
                     return self.new_symbol("request")
 
         if isinstance(node, ast.Call):
-            # request.args.get(...)
             if isinstance(node.func, ast.Attribute):
                 if isinstance(node.func.value, ast.Attribute):
                     if isinstance(node.func.value.value, ast.Name) and node.func.value.value.id == "request":
@@ -123,10 +124,16 @@ class SymbolicAnalyzer:
                         sym.path.append("get")
                         return sym
 
-        # propagate through expressions
+        # XSS
         if isinstance(node, ast.BinOp):
             left = self.eval_node(node.left)
             right = self.eval_node(node.right)
+
+            if isinstance(left, str) and isinstance(right, SymbolicValue):
+                if any(tag in left.lower() for tag in HTML_KEYWORDS):
+                    self.add_finding("Cross-Site Scripting (XSS)", "HIGH", right, "HTTP response",
+                                     "User input returned directly to browser",
+                                     "Escape output or use templating auto-escaping")
 
             if isinstance(left, SymbolicValue) and isinstance(right, SymbolicValue):
                 return left.merge(right)
@@ -135,71 +142,90 @@ class SymbolicAnalyzer:
             if isinstance(right, SymbolicValue):
                 return right
 
-        # function calls (call graph)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            fname = node.func.id
-            if fname in self.functions:
-                saved = dict(self.symbols)
-                self.execute_block(self.functions[fname].body)
-                self.symbols = saved
-
-        # ----- Vulnerability sinks -----
-
-        # Path Traversal
+        # Path traversal
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "open":
-            arg = self.eval_node(node.args[0])
-            if isinstance(arg, SymbolicValue):
-                self.add_finding("Path Traversal", "MEDIUM", arg, "open(path)",
-                                 "User input used as filesystem path",
-                                 "Validate filename or use secure_filename()")
+            if node.args:
+                arg = self.eval_node(node.args[0])
+                if isinstance(arg, SymbolicValue):
+                    self.add_finding("Path Traversal", "MEDIUM", arg, "open(path)",
+                                     "User input used as filesystem path",
+                                     "Validate filename or use secure_filename()")
 
-        # SQL Injection
+        # SQL
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if node.func.attr in SQL_METHODS:
+            if node.func.attr in SQL_METHODS and node.args:
                 query = self.eval_node(node.args[0])
                 if isinstance(query, SymbolicValue):
                     self.add_finding("SQL Injection", "HIGH", query, "cursor.execute(query)",
                                      "User input concatenated into SQL query",
                                      "Use parameterized queries")
 
-        # Command Injection
+        # Command
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if node.func.attr in SUBPROCESS_METHODS:
-                cmd = self.eval_node(node.args[0])
-                shell_true = any(kw.arg == "shell" and getattr(kw.value, "value", False) for kw in node.keywords)
-                if isinstance(cmd, SymbolicValue) and shell_true:
-                    self.add_finding("Command Injection", "CRITICAL", cmd, "subprocess(shell=True)",
-                                     "User input executed by OS shell",
-                                     "Avoid shell=True and pass arguments as a list")
+                if node.args:
+                    cmd = self.eval_node(node.args[0])
+                    shell_true = any(kw.arg == "shell" and getattr(kw.value, "value", False) for kw in node.keywords)
+                    if isinstance(cmd, SymbolicValue) and shell_true:
+                        self.add_finding("Command Injection", "CRITICAL", cmd, "subprocess(shell=True)",
+                                         "User input executed by OS shell",
+                                         "Avoid shell=True and pass arguments as a list")
 
-        # Unsafe Deserialization
+        # Deserialization
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if node.func.attr in DESERIALIZE_METHODS:
+            if node.func.attr in DESERIALIZE_METHODS and node.args:
                 val = self.eval_node(node.args[0])
                 if isinstance(val, SymbolicValue):
                     self.add_finding("Unsafe Deserialization", "CRITICAL", val, "pickle/yaml loads()",
                                      "Untrusted data deserialized into objects",
                                      "Never deserialize untrusted input")
 
-        # SSRF
+        # SSRF (FIXED — supports keyword arguments)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if node.func.attr in NETWORK_METHODS:
-                url = self.eval_node(node.args[0])
+            obj = node.func.value
+            if isinstance(obj, ast.Name) and obj.id == "requests":
+
+                url = None
+
+                if node.args:
+                    url = self.eval_node(node.args[0])
+
+                for kw in node.keywords:
+                    if kw.arg in ("url", "uri"):
+                        url = self.eval_node(kw.value)
+
                 if isinstance(url, SymbolicValue):
                     self.add_finding("Server-Side Request Forgery (SSRF)", "HIGH", url, "HTTP request",
                                      "User-controlled URL used in server request",
                                      "Validate allowed hosts")
 
-        # Open Redirect
+        # Open redirect
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "redirect":
-            target = self.eval_node(node.args[0])
-            if isinstance(target, SymbolicValue):
-                self.add_finding("Open Redirect", "MEDIUM", target, "redirect()",
-                                 "User-controlled URL used in redirect",
-                                 "Restrict to internal paths")
+            if node.args:
+                target = self.eval_node(node.args[0])
+                if isinstance(target, SymbolicValue):
+                    self.add_finding("Open Redirect", "MEDIUM", target, "redirect()",
+                                     "User-controlled URL used in redirect",
+                                     "Restrict to internal paths")
+
+        # IDOR
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr in DB_FETCH_NAMES and node.args:
+                arg_node = node.args[0]
+                ident = self.eval_node(arg_node)
+                if isinstance(ident, SymbolicValue):
+
+                    if isinstance(arg_node, ast.Name) and arg_node.id in self.authorized_ids:
+                        return None
+
+                    self.add_finding("Insecure Direct Object Reference (IDOR)", "HIGH", ident,
+                                     f"{node.func.attr}(id)",
+                                     "User-controlled identifier used to access protected object",
+                                     "Verify authorization")
 
         # Missing Authorization
         if isinstance(node, ast.Call):
+
             func_name = ""
             if isinstance(node.func, ast.Attribute):
                 func_name = node.func.attr.lower()
@@ -207,16 +233,24 @@ class SymbolicAnalyzer:
                 func_name = node.func.id.lower()
 
             privileged_keywords = [
-                "delete", "remove", "transfer", "grant", "revoke",
-                "promote", "demote", "set_role", "make_admin",
-                "change_password", "reset_password", "ban", "unban"
+                "delete", "remove", "transfer",
+                "grant", "revoke", "promote",
+                "demote", "set_role", "make_admin",
+                "change_password", "reset_password",
+                "ban", "unban"
             ]
 
             if any(word in func_name for word in privileged_keywords):
+
                 if node.args:
                     arg_node = node.args[0]
                     sym = self.eval_node(arg_node)
+
                     if isinstance(sym, SymbolicValue):
+
+                        if isinstance(arg_node, ast.Name) and arg_node.id in self.authorized_ids:
+                            return None
+
                         self.add_finding(
                             "Missing Authorization",
                             "CRITICAL",
@@ -228,7 +262,7 @@ class SymbolicAnalyzer:
 
         return None
 
-    # ---------- Execution ----------
+    # -------- Control flow traversal --------
     def execute_block(self, body):
         for stmt in body:
 
@@ -246,25 +280,8 @@ class SymbolicAnalyzer:
                 self.execute_block(stmt.body)
                 self.execute_block(stmt.orelse)
 
-            elif isinstance(stmt, ast.Return):
-                val = self.eval_node(stmt.value)
-                if isinstance(val, SymbolicValue):
-                    self.add_finding(
-                        "Cross-Site Scripting (XSS)",
-                        "HIGH",
-                        val,
-                        "HTTP response",
-                        "User input returned directly to browser",
-                        "Escape output or use templating auto-escaping"
-                    )
-
     def analyze(self, tree):
-        self.discover_routes(tree)
-
-        # start analysis only from route handlers
-        for fname in self.route_functions:
-            self.symbols = {}
-            self.execute_block(self.functions[fname].body)
+        self.execute_block(tree.body)
 
 
 class AnalysisReport:
