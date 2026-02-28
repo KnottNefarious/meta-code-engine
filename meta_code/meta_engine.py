@@ -75,7 +75,8 @@ class SymbolicAnalyzer:
             )
         )
 
-    # ---------- core taint evaluation ----------
+    # -------------------- Core Evaluation --------------------
+
     def eval_node(self, node):
 
         if node is None:
@@ -87,7 +88,7 @@ class SymbolicAnalyzer:
         if isinstance(node, ast.Name):
             return self.symbols.get(node.id)
 
-        # request.data / request.args etc
+        # request.data / request.args / etc
         if isinstance(node, ast.Attribute):
             if isinstance(node.value, ast.Name) and node.value.id == "request":
                 if node.attr in REQUEST_CONTAINERS:
@@ -100,16 +101,15 @@ class SymbolicAnalyzer:
                 sym.path.append("get")
                 return sym
 
-        # -------- FUNCTION CALL PROPAGATION (NEW) --------
+        # ---------- FOLLOW FUNCTION CALLS ----------
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             func_name = node.func.id
             if func_name in self.functions:
                 func_def = self.functions[func_name]
 
-                # save current state
                 old_symbols = self.symbols.copy()
 
-                # map arguments into parameters
+                # map arguments to parameters
                 for i, arg in enumerate(func_def.args.args):
                     if i < len(node.args):
                         self.symbols[arg.arg] = self.eval_node(node.args[i])
@@ -117,12 +117,9 @@ class SymbolicAnalyzer:
                 # execute function body
                 self.execute_block(func_def.body)
 
-                # try to read return value
                 ret_val = self.symbols.get("_return")
 
-                # restore state
                 self.symbols = old_symbols
-
                 return ret_val
 
         # sanitizers
@@ -158,7 +155,7 @@ class SymbolicAnalyzer:
                 )
             return None
 
-        # SQL
+        # SQL INJECTION
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if node.func.attr in SQL_METHODS:
                 query = self.eval_node(node.args[0])
@@ -172,7 +169,7 @@ class SymbolicAnalyzer:
                         "Use parameterized queries",
                     )
 
-        # COMMAND
+        # COMMAND INJECTION
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if node.func.attr in SUBPROCESS_METHODS:
                 shell_true = any(
@@ -208,33 +205,47 @@ class SymbolicAnalyzer:
 
         return None
 
-    # ---------- execution engine ----------
+    # -------------------- Execution Engine --------------------
+
     def execute_block(self, body):
         for stmt in body:
 
-            # assignments
             if isinstance(stmt, ast.Assign) and isinstance(stmt.targets[0], ast.Name):
                 value = self.eval_node(stmt.value)
                 if isinstance(value, SymbolicValue):
                     value.path.append(stmt.targets[0].id)
                 self.symbols[stmt.targets[0].id] = value
 
-            # returns
             elif isinstance(stmt, ast.Return):
                 self.symbols["_return"] = self.eval_node(stmt.value)
 
-            # expressions
             elif isinstance(stmt, ast.Expr):
                 self.eval_node(stmt.value)
 
+    # -------------------- Analysis --------------------
+
     def analyze(self, tree):
-        # collect all functions first
+
+        # collect functions first
         for node in tree.body:
             if isinstance(node, ast.FunctionDef):
                 self.functions[node.name] = node
 
-        # analyze module
+        # run top-level code
         self.execute_block(tree.body)
+
+        # simulate calling each function (web entrypoints)
+        for func in self.functions.values():
+
+            old_symbols = self.symbols.copy()
+
+            # parameters = attacker input
+            for arg in func.args.args:
+                self.symbols[arg.arg] = self.new_symbol(arg.arg)
+
+            self.execute_block(func.body)
+
+            self.symbols = old_symbols
 
 
 class AnalysisReport:
