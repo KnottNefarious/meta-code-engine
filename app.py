@@ -1,10 +1,9 @@
 import os
-import ast
 import io
+import ast
 import zipfile
 import traceback
-import urllib.request
-import urllib.error
+import requests
 
 from flask import Flask, render_template, request, jsonify
 from meta_code.meta_engine import MetaCodeEngine
@@ -12,13 +11,13 @@ from meta_code.meta_engine import MetaCodeEngine
 app = Flask(__name__)
 
 
-# ---------------- HOME ----------------
+# ---------------- Home Page ----------------
 @app.route('/')
 def home():
     return render_template('index.html')
 
 
-# ---------------- SINGLE SNIPPET ANALYSIS ----------------
+# ---------------- Single Code Snippet Analysis ----------------
 @app.route('/api/analyze', methods=['POST'])
 def analyze():
     try:
@@ -41,7 +40,7 @@ def analyze():
         return jsonify({'success': False, 'error': traceback.format_exc()}), 500
 
 
-# ---------------- GITHUB REPOSITORY ANALYSIS ----------------
+# ---------------- GitHub Repository Analysis ----------------
 @app.route('/api/analyze_repo', methods=['POST'])
 def analyze_repo():
     try:
@@ -51,86 +50,55 @@ def analyze_repo():
         if not repo_url.startswith("https://github.com/"):
             return jsonify({'success': False, 'error': 'Invalid GitHub URL'}), 400
 
-        # Extract owner and repo
-        parts = repo_url.replace("https://github.com/", "").strip("/").split("/")
+        # Parse owner/repo
+        parts = repo_url.replace("https://github.com/", "").replace(".git", "").split("/")
         if len(parts) < 2:
             return jsonify({'success': False, 'error': 'Invalid repository format'}), 400
 
-        user, repo = parts[0], parts[1].replace(".git", "")
+        user, repo = parts[0], parts[1]
 
-        # ---------- DIRECT DOWNLOAD (NO API, NO REQUESTS LIB) ----------
-        def try_download(branch):
-            zip_url = f"https://github.com/{user}/{repo}/archive/refs/heads/{branch}.zip"
-            try:
-                with urllib.request.urlopen(zip_url, timeout=40) as response:
-                    return response.read()
-            except urllib.error.HTTPError:
-                return None
-            except urllib.error.URLError:
-                return None
+        # Ask GitHub what the default branch is (main/master/etc.)
+        api_url = f"https://api.github.com/repos/{user}/{repo}"
+        meta = requests.get(api_url, timeout=20)
 
-        zip_content = None
+        if meta.status_code != 200:
+            return jsonify({'success': False, 'error': 'Could not read repository metadata from GitHub'}), 400
 
-        # Try common branch names
-        for branch in ["main", "master"]:
-            zip_content = try_download(branch)
-            if zip_content:
-                break
+        default_branch = meta.json().get("default_branch", "main")
 
-        if not zip_content:
-            return jsonify({
-                'success': False,
-                'error': 'Could not download repository (private repo or unsupported branch)'
-            }), 400
+        # Download the repository ZIP
+        zip_url = f"https://github.com/{user}/{repo}/archive/refs/heads/{default_branch}.zip"
+        response = requests.get(zip_url, timeout=40)
 
-        # ---------- UNZIP ----------
-        zip_bytes = io.BytesIO(zip_content)
-        z = zipfile.ZipFile(zip_bytes)
+        if response.status_code != 200:
+            return jsonify({'success': False, 'error': 'Could not download repository'}), 400
 
-        definitions = []
-        top_level = []
+        z = zipfile.ZipFile(io.BytesIO(response.content))
 
+        collected_code = []
+
+        # IMPORTANT FIX:
+        # We NO LONGER REMOVE IMPORTS.
+        # Instead we concatenate every .py file so cross-file calls work.
         for filename in z.namelist():
+
             if not filename.endswith(".py"):
                 continue
 
-            content = z.read(filename).decode("utf-8", errors="ignore")
-
-            # Remove imports (prevents missing dependency parse errors)
-            cleaned_lines = []
-            for line in content.splitlines():
-                stripped = line.strip()
-                if stripped.startswith("import ") or stripped.startswith("from "):
-                    continue
-                cleaned_lines.append(line)
-
-            cleaned_code = "\n".join(cleaned_lines)
-
             try:
-                tree = ast.parse(cleaned_code)
+                content = z.read(filename).decode("utf-8", errors="ignore")
             except Exception:
                 continue
 
-            for node in tree.body:
-                segment = ast.get_source_segment(cleaned_code, node)
-                if segment is None:
-                    continue
+            # Add file markers (helps debugging & keeps AST readable)
+            collected_code.append(f"\n\n# ===== FILE: {filename} =====\n\n")
+            collected_code.append(content)
 
-                if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
-                    definitions.append(segment)
-                else:
-                    top_level.append(segment)
+        if not collected_code:
+            return jsonify({'success': False, 'error': 'No Python files found in repository'}), 400
 
-        if not definitions and not top_level:
-            return jsonify({'success': False, 'error': 'No analyzable Python code found'}), 400
+        final_program = "\n".join(collected_code)
 
-        # Combine into one analyzable program
-        final_program = "import os\n\n"
-        final_program += "\n\n".join(definitions)
-        final_program += "\n\n"
-        final_program += "\n".join(top_level)
-
-        # ---------- ANALYZE ----------
         engine = MetaCodeEngine()
         report = engine.orchestrate(final_program)
 
@@ -144,13 +112,13 @@ def analyze_repo():
         return jsonify({'success': False, 'error': traceback.format_exc()}), 500
 
 
-# ---------------- HEALTH ----------------
+# ---------------- Health Check ----------------
 @app.route('/api/health')
 def health():
     return jsonify({'status': 'ok'})
 
 
-# ---------------- RUN SERVER ----------------
+# ---------------- Server Start ----------------
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     debug_mode = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
