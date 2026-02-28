@@ -1,225 +1,256 @@
 import ast
 
-SANITIZERS = {"escape"}
+# =========================
+# Known sinks & sources
+# =========================
 
 SQL_METHODS = {"execute", "executemany"}
-DB_FETCH_NAMES = {"find", "load", "fetch", "get_user", "get_by_id", "query_user"}
 REQUEST_CONTAINERS = {"args", "form", "json", "values", "headers", "cookies", "data"}
-
 HTML_KEYWORDS = {"<html", "<div", "<script", "<h1", "<body", "<span"}
 
+IDOR_FUNCTIONS = {"get_user", "load_user", "find_user", "query_user", "get_by_id"}
 
-# ---------------- Finding ----------------
+
+# =========================
+# Finding Object
+# =========================
+
 class Finding:
-    def __init__(self, vuln_type, severity, line, path, sink, reason, fix):
+    def __init__(self, vuln_type, severity, path, sink, reason, fix, location=None):
         self.vuln_type = vuln_type
         self.severity = severity
-        self.line = line
         self.path = path
         self.sink = sink
         self.reason = reason
         self.fix = fix
-
-    def format(self):
-        path_str = " → ".join(f"{label}(line {ln})" if ln else label for label, ln in self.path)
-
-        return (
-            f"{self.vuln_type}\n"
-            f"Severity: {self.severity}\n"
-            f"Location: line {self.line}\n"
-            f"Attack Path: {path_str}\n"
-            f"Sink: {self.sink}\n"
-            f"Why: {self.reason}\n"
-            f"Fix: {self.fix}"
-        )
+        self.location = location
 
 
-# ---------------- Symbolic Value ----------------
+# =========================
+# Symbolic Value (Taint Object)
+# =========================
+
 class SymbolicValue:
-    def __init__(self, tainted=False, path=None):
+    def __init__(self, name, tainted=False, path=None):
+        self.name = name
         self.tainted = tainted
         self.path = path or []
 
-    def step(self, label, node):
+    def add_step(self, label, node):
         line = getattr(node, "lineno", None)
         self.path.append((label, line))
 
     def merge(self, other):
-        return SymbolicValue(
-            self.tainted or other.tainted,
-            list(dict.fromkeys(self.path + other.path))
-        )
+        merged = SymbolicValue(self.name, self.tainted or other.tainted, list(self.path))
+        for step in other.path:
+            if step not in merged.path:
+                merged.path.append(step)
+        return merged
 
 
-# ---------------- Analyzer ----------------
+# =========================
+# Symbolic Analyzer
+# =========================
+
 class SymbolicAnalyzer:
     def __init__(self):
         self.symbols = {}
         self.findings = []
-        self.fingerprints = set()
-        self.functions = {}
+        self._fingerprints = set()
+        self.counter = 0
 
-    def add_finding(self, vuln_type, severity, sym, node, sink, reason, fix):
-        line = getattr(node, "lineno", 0)
-
-        fingerprint = (vuln_type, line, sink)
-        if fingerprint in self.fingerprints:
-            return
-        self.fingerprints.add(fingerprint)
-
-        self.findings.append(
-            Finding(vuln_type, severity, line, sym.path, sink, reason, fix)
-        )
-
-    # ---------- Sources ----------
-    def request_source(self, node):
-        sym = SymbolicValue(True, [])
-        sym.step("request", node)
+    # -------- Create tainted symbol --------
+    def new_symbol(self, node, source="request"):
+        self.counter += 1
+        sym = SymbolicValue(f"{source}_{self.counter}", True)
+        sym.add_step(source, node)
         return sym
 
-    # ---------- Evaluation ----------
-    def eval(self, node):
+    # -------- Add finding (deduplicated) --------
+    def add_finding(self, vuln_type, severity, sym, sink, reason, fix, node):
+        location = getattr(node, "lineno", None)
+
+        fingerprint = (vuln_type, location, sink)
+        if fingerprint in self._fingerprints:
+            return
+
+        self._fingerprints.add(fingerprint)
+
+        self.findings.append(
+            Finding(vuln_type, severity, list(sym.path), sink, reason, fix, location)
+        )
+
+    # =========================
+    # Node Evaluation
+    # =========================
+
+    def eval_node(self, node):
 
         if node is None:
             return None
 
-        # constant
+        # constants
         if isinstance(node, ast.Constant):
             return node.value
 
-        # variable
+        # variable usage
         if isinstance(node, ast.Name):
             return self.symbols.get(node.id)
 
-        # request.args / request.form
+        # request.args / request.form etc
         if isinstance(node, ast.Attribute):
             if isinstance(node.value, ast.Name) and node.value.id == "request":
                 if node.attr in REQUEST_CONTAINERS:
-                    return self.request_source(node)
+                    return self.new_symbol(node)
 
         # request.args.get("q")
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if isinstance(node.func.value, ast.Attribute):
-                if isinstance(node.func.value.value, ast.Name) and node.func.value.value.id == "request":
-                    sym = self.request_source(node)
-                    sym.step("get", node)
-                    return sym
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Attribute):
+                attr = node.func
 
-        # sanitizer
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            if node.func.id in SANITIZERS:
-                return SymbolicValue(False, [])
+                if isinstance(attr.value, ast.Attribute):
+                    if isinstance(attr.value.value, ast.Name) and attr.value.value.id == "request":
+                        sym = self.new_symbol(node)
+                        sym.add_step("get", node)
+                        return sym
 
-        # function calls (inter-procedural)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            fname = node.func.id
-
-            # IDOR
-            if fname in DB_FETCH_NAMES and node.args:
-                arg = self.eval(node.args[0])
-                if isinstance(arg, SymbolicValue) and arg.tainted:
-                    self.add_finding(
-                        "Insecure Direct Object Reference (IDOR)",
-                        "HIGH",
-                        arg,
-                        node,
-                        f"{fname}(id)",
-                        "User-controlled identifier used to access protected object",
-                        "Verify the object belongs to the current authenticated user"
-                    )
-
-            if fname in self.functions:
-                arg_values = [self.eval(a) for a in node.args]
-
-                saved = self.symbols.copy()
-                params = self.functions[fname][0].args.args
-
-                for param, val in zip(params, arg_values):
-                    if isinstance(val, SymbolicValue):
-                        val.step(fname, node)
-                    self.symbols[param.arg] = val
-
-                self.execute(self.functions[fname][1])
-                ret = self.symbols.get("__return__")
-
-                self.symbols = saved
-                return ret
-
-        # concatenation XSS
+        # string concatenation (XSS propagation)
         if isinstance(node, ast.BinOp):
-            left = self.eval(node.left)
-            right = self.eval(node.right)
+            left = self.eval_node(node.left)
+            right = self.eval_node(node.right)
 
-            if isinstance(left, SymbolicValue) and isinstance(right, str):
-                if any(tag in right.lower() for tag in HTML_KEYWORDS):
-                    left.step("propagation", node)
-                    return left
+            def html_literal(v):
+                return isinstance(v, str) and any(tag in v.lower() for tag in HTML_KEYWORDS)
 
-            if isinstance(right, SymbolicValue) and isinstance(left, str):
-                if any(tag in left.lower() for tag in HTML_KEYWORDS):
-                    right.step("propagation", node)
-                    return right
+            if isinstance(left, SymbolicValue) and html_literal(right):
+                left.add_step("propagation", node)
+                return left
+
+            if isinstance(right, SymbolicValue) and html_literal(left):
+                right.add_step("propagation", node)
+                return right
 
             if isinstance(left, SymbolicValue) and isinstance(right, SymbolicValue):
                 return left.merge(right)
-            return left or right
+
+            if isinstance(left, SymbolicValue):
+                return left
+            if isinstance(right, SymbolicValue):
+                return right
+
+        # return sink (XSS)
+        if isinstance(node, ast.Return):
+            val = self.eval_node(node.value)
+            if isinstance(val, SymbolicValue):
+                val.add_step("return", node)
+                self.add_finding(
+                    "Cross-Site Scripting (XSS)",
+                    "HIGH",
+                    val,
+                    "HTTP response",
+                    "User input returned directly to browser",
+                    "Escape output or use templating auto-escaping",
+                    node,
+                )
+
+        # SQL Injection
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr in SQL_METHODS and node.args:
+                query = self.eval_node(node.args[0])
+                if isinstance(query, SymbolicValue):
+                    self.add_finding(
+                        "SQL Injection",
+                        "HIGH",
+                        query,
+                        "cursor.execute(query)",
+                        "User input concatenated into SQL query",
+                        "Use parameterized queries",
+                        node,
+                    )
+
+        # IDOR
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id in IDOR_FUNCTIONS and node.args:
+                ident = self.eval_node(node.args[0])
+                if isinstance(ident, SymbolicValue):
+                    self.add_finding(
+                        "Insecure Direct Object Reference (IDOR)",
+                        "HIGH",
+                        ident,
+                        f"{node.func.id}(id)",
+                        "User-controlled identifier used to access protected object",
+                        "Verify the object belongs to the current authenticated user",
+                        node,
+                    )
 
         return None
 
-    # ---------- Execute block ----------
-    def execute(self, body):
+    # =========================
+    # Traverse code
+    # =========================
+
+    def execute_block(self, body):
         for stmt in body:
 
-            if isinstance(stmt, ast.Assign):
-                if isinstance(stmt.targets[0], ast.Name):
-                    val = self.eval(stmt.value)
-                    if isinstance(val, SymbolicValue):
-                        val.step(stmt.targets[0].id, stmt)
-                    self.symbols[stmt.targets[0].id] = val
-
-            elif isinstance(stmt, ast.Return):
-                val = self.eval(stmt.value)
-                if isinstance(val, SymbolicValue) and val.tainted:
-                    val.step("return", stmt)
-                    self.add_finding(
-                        "Cross-Site Scripting (XSS)",
-                        "HIGH",
-                        val,
-                        stmt,
-                        "HTTP response",
-                        "User input returned directly to browser",
-                        "Escape output or use templating auto-escaping"
-                    )
-                self.symbols["__return__"] = val
+            if isinstance(stmt, ast.Assign) and isinstance(stmt.targets[0], ast.Name):
+                val = self.eval_node(stmt.value)
+                if isinstance(val, SymbolicValue):
+                    val.add_step(stmt.targets[0].id, stmt)
+                self.symbols[stmt.targets[0].id] = val
 
             elif isinstance(stmt, ast.Expr):
-                self.eval(stmt.value)
+                self.eval_node(stmt.value)
+
+            elif isinstance(stmt, ast.Return):
+                self.eval_node(stmt)
 
             elif isinstance(stmt, ast.If):
-                self.execute(stmt.body)
-                self.execute(stmt.orelse)
+                self.eval_node(stmt.test)
+                self.execute_block(stmt.body)
+                self.execute_block(stmt.orelse)
 
-    # ---------- Analyze ----------
     def analyze(self, tree):
+        self.execute_block(tree.body)
 
-        # collect functions
-        for node in tree.body:
+        # analyze functions
+        for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef):
-                self.functions[node.name] = (node, node.body)
+                saved = self.symbols.copy()
+                self.execute_block(node.body)
+                self.symbols = saved
 
-        # run module
-        self.execute(tree.body)
 
+# =========================
+# Report Formatter
+# =========================
 
-# ---------------- Report ----------------
 class AnalysisReport:
     def __init__(self, findings):
-        self.issues = [f.format() for f in findings]
+        self.issues = [self.format_issue(f) for f in findings]
+
+    def format_issue(self, finding):
+        path_str = " → ".join(
+            f"{label}(line {line})" if line else label
+            for label, line in finding.path
+        )
+
+        return (
+            f"{finding.vuln_type}\n"
+            f"Severity: {finding.severity}\n"
+            f"Location: line {finding.location}\n"
+            f"Attack Path: {path_str}\n"
+            f"Sink: {finding.sink}\n"
+            f"Why: {finding.reason}\n"
+            f"Fix: {finding.fix}"
+        )
 
 
-# ---------------- Engine ----------------
+# =========================
+# Engine Entry Point
+# =========================
+
 class MetaCodeEngine:
-    def orchestrate(self, code):
+    def orchestrate(self, code: str):
         tree = ast.parse(code)
         analyzer = SymbolicAnalyzer()
         analyzer.analyze(tree)
