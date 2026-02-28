@@ -1,66 +1,157 @@
 Meta-Code Engine
 
-Meta-Code Engine is a web-based Python code analysis system that analyzes source code structure, detects potential issues, and produces a structured reasoning report about the program.
+Meta-Code Engine is a static application security analyzer (SAST) for Python web applications.
 
-It is designed as a foundation for a future self-reasoning programming system — a program that can examine code and make logical conclusions about how it behaves.
+It analyzes Python source code without running it and determines whether attacker-controlled input can reach dangerous operations such as OS commands, databases, file access, network requests, or browser output.
 
----
-
-Features
-
-- Syntax validation
-- Structural AST (Abstract Syntax Tree) analysis
-- Complexity measurement
-- Pattern detection
-- Resolution suggestions
-- Web interface for interactive analysis
+Instead of simple pattern matching, the engine performs taint flow + control-flow analysis and reconstructs real attack paths through the program.
 
 ---
 
-How It Works
+What It Does
 
-1. User pastes Python code into the website
-2. Flask API receives the code
-3. The MetaCodeEngine parses the code using Python's AST module
-4. The engine produces a reasoning report
-5. The report is returned to the browser as JSON and displayed
+The analyzer models a real attacker interacting with a Flask-style web app:
 
-Architecture:
+HTTP Request → Program Logic → Sensitive Operation
 
-Browser → Flask API → MetaCodeEngine → AnalysisReport → JSON → UI
+It tracks untrusted data from web request sources and determines whether it can influence a security-critical action.
+
+The engine also understands defensive code (authorization checks), allowing it to avoid many false positives.
+
+---
+
+Detected Vulnerabilities
+
+Currently the engine detects:
+
+Remote Code & System
+
+- Command Injection (subprocess / shell=True)
+- Unsafe Deserialization (pickle / yaml loads)
+
+Database
+
+- SQL Injection
+
+Filesystem
+
+- Path Traversal / Arbitrary File Read
+
+Web Application Logic
+
+- Insecure Direct Object Reference (IDOR)
+- Missing authorization checks
+
+Network
+
+- Server-Side Request Forgery (SSRF)
+
+Web Browser
+
+- Cross-Site Scripting (XSS)
+- Open Redirect
+
+Each finding includes:
+
+- Severity
+- Exploitability likelihood
+- Attack path reconstruction
+- Explanation
+- Suggested fix
+
+---
+
+Example Output
+
+Command Injection
+Severity: CRITICAL
+Exploitability: VERY LIKELY
+Attack Path: request → get → cmd
+Sink: subprocess(shell=True)
+Why: User input executed by OS shell
+Fix: Avoid shell=True and pass arguments as a list
+
+---
+
+Key Features
+
+- Static analysis (no code execution required)
+- Path-sensitive taint tracking
+- Control-flow aware (understands if-statements and authorization)
+- Attack path reconstruction
+- Exploitability scoring
+- Web interface (Flask)
+- Mobile friendly UI
+
+---
+
+Supported Input Sources (Flask)
+
+The analyzer treats the following as attacker-controlled:
+
+- "request.args"
+- "request.form"
+- "request.json"
+- "request.headers"
+- "request.cookies"
+- "request.data"
+
+---
+
+How It Works (Technical)
+
+1. Python code is parsed into an Abstract Syntax Tree (AST)
+2. A symbolic execution engine walks the program
+3. Tainted values are tracked across variables and function calls
+4. When tainted data reaches a security sink, a vulnerability is reported
+5. Authorization checks are detected and suppress false positives
+
+This makes the tool closer to a security code reviewer than a linter.
 
 ---
 
 Running Locally
 
+Clone the repository:
+
+git clone https://github.com/KnottNefarious/meta-code-engine.git
+cd meta-code-engine
+
 Install dependencies:
 
 pip install -r requirements.txt
 
-Run:
+Run the server:
 
 python app.py
 
-Then open:
+Open:
 
-http://127.0.0.1:5000
-
----
-
-API
-
-POST /api/analyze
-
-Body:
-{
-"code": "print('hello world')"
-}
-
-Returns:
-Structured analysis report describing the code.
+http://localhost:5000
 
 ---
 
-Goal
+Project Structure
 
-The long-term goal of this project is to develop a system capable of reasoning about programs — not just executing them — and eventually assisting in automated program understanding and correction.
+app.py                → Flask interface
+meta_code/meta_engine.py → security analysis engine
+templates/index.html  → web UI
+tests/                → example test cases
+
+---
+
+Why This Tool Exists
+
+Most linters check syntax.
+
+Meta-Code Engine checks security behavior.
+
+It answers the question:
+
+«“If an attacker sends a request to this program, what can they make it do?”»
+
+---
+
+License
+
+MIT
