@@ -1,9 +1,11 @@
 import os
 import io
 import ast
+import json
 import zipfile
 import traceback
-import requests
+import urllib.request
+import urllib.error
 
 from flask import Flask, render_template, request, jsonify
 from meta_code.meta_engine import MetaCodeEngine
@@ -11,13 +13,13 @@ from meta_code.meta_engine import MetaCodeEngine
 app = Flask(__name__)
 
 
-# ---------------- Home Page ----------------
+# ---------------- Home ----------------
 @app.route('/')
 def home():
     return render_template('index.html')
 
 
-# ---------------- Single Code Snippet Analysis ----------------
+# ---------------- Single Snippet Analysis ----------------
 @app.route('/api/analyze', methods=['POST'])
 def analyze():
     try:
@@ -50,38 +52,37 @@ def analyze_repo():
         if not repo_url.startswith("https://github.com/"):
             return jsonify({'success': False, 'error': 'Invalid GitHub URL'}), 400
 
-        # Parse owner/repo
+        # parse owner/repo
         parts = repo_url.replace("https://github.com/", "").replace(".git", "").split("/")
         if len(parts) < 2:
             return jsonify({'success': False, 'error': 'Invalid repository format'}), 400
 
         user, repo = parts[0], parts[1]
 
-        # Ask GitHub what the default branch is (main/master/etc.)
+        # ---- Step 1: ask GitHub what the default branch is ----
         api_url = f"https://api.github.com/repos/{user}/{repo}"
-        meta = requests.get(api_url, timeout=20)
 
-        if meta.status_code != 200:
+        try:
+            with urllib.request.urlopen(api_url, timeout=20) as response:
+                meta_data = json.loads(response.read().decode())
+                default_branch = meta_data.get("default_branch", "main")
+        except Exception:
             return jsonify({'success': False, 'error': 'Could not read repository metadata from GitHub'}), 400
 
-        default_branch = meta.json().get("default_branch", "main")
-
-        # Download the repository ZIP
+        # ---- Step 2: download repository zip ----
         zip_url = f"https://github.com/{user}/{repo}/archive/refs/heads/{default_branch}.zip"
-        response = requests.get(zip_url, timeout=40)
 
-        if response.status_code != 200:
+        try:
+            with urllib.request.urlopen(zip_url, timeout=40) as response:
+                zip_bytes = io.BytesIO(response.read())
+                z = zipfile.ZipFile(zip_bytes)
+        except Exception:
             return jsonify({'success': False, 'error': 'Could not download repository'}), 400
 
-        z = zipfile.ZipFile(io.BytesIO(response.content))
-
+        # ---- Step 3: collect all python files (cross-file analysis) ----
         collected_code = []
 
-        # IMPORTANT FIX:
-        # We NO LONGER REMOVE IMPORTS.
-        # Instead we concatenate every .py file so cross-file calls work.
         for filename in z.namelist():
-
             if not filename.endswith(".py"):
                 continue
 
@@ -90,7 +91,6 @@ def analyze_repo():
             except Exception:
                 continue
 
-            # Add file markers (helps debugging & keeps AST readable)
             collected_code.append(f"\n\n# ===== FILE: {filename} =====\n\n")
             collected_code.append(content)
 
@@ -99,6 +99,7 @@ def analyze_repo():
 
         final_program = "\n".join(collected_code)
 
+        # ---- Step 4: run analyzer ----
         engine = MetaCodeEngine()
         report = engine.orchestrate(final_program)
 
@@ -118,7 +119,7 @@ def health():
     return jsonify({'status': 'ok'})
 
 
-# ---------------- Server Start ----------------
+# ---------------- Start Server ----------------
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     debug_mode = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
