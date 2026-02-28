@@ -1,4 +1,4 @@
-Meta-Code Engine
+Meta-Code Engine 
 
 Meta-Code Engine is a static application security analyzer (SAST) for Python web applications.
 
@@ -8,7 +8,7 @@ Instead of simple pattern matching, the engine performs taint flow + control-flo
 
 ---
 
-What It Does
+What It Does 🐍...
 
 The analyzer models a real attacker interacting with a Flask-style web app:
 
@@ -19,8 +19,8 @@ It tracks untrusted data from web request sources and determines whether it can 
 The engine also understands defensive code (authorization checks), allowing it to avoid many false positives.
 
 ---
-
-Detected Vulnerabilities
+ 
+Detected Vulnerabilities 👌
 
 Currently the engine detects:
 
@@ -61,7 +61,7 @@ Each finding includes:
 
 ---
 
-Example Output
+Example Output 📝
 
 Command Injection
 Severity: CRITICAL
@@ -73,7 +73,7 @@ Fix: Avoid shell=True and pass arguments as a list
 
 ---
 
-Key Features
+Key Features 📊
 
 - Static analysis (no code execution required)
 - Path-sensitive taint tracking
@@ -98,7 +98,7 @@ The analyzer treats the following as attacker-controlled:
 
 ---
 
-How It Works (Technical)
+How It Works (Technical) 🧠
 
 1. Python code is parsed into an Abstract Syntax Tree (AST)
 2. A symbolic execution engine walks the program
@@ -112,7 +112,7 @@ This makes the tool closer to a security code reviewer than a linter.
 
 Running Locally
 
-Clone the repository:
+Clone the repository: 🤯
 
 git clone https://github.com/KnottNefarious/meta-code-engine.git
 cd meta-code-engine
@@ -148,7 +148,8 @@ Meta-Code Engine checks security behavior.
 
 It answers the question:
 
-«“If an attacker sends a request to this program, what can they make it do?”»
+«“If an attacker sends a request to this program, 
+what can they make it do?”» 🤷‍♂️
 
 ---
 
