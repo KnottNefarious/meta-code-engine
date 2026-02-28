@@ -36,7 +36,6 @@ class SymbolicValue:
     def sanitize(self, label):
         clean = SymbolicValue(self.name, False, list(self.path))
         clean.path.append(f"sanitized:{label}")
-        clean.tainted = False
         return clean
 
     def merge(self, other):
@@ -76,6 +75,7 @@ class SymbolicAnalyzer:
             )
         )
 
+    # ---------- core taint evaluation ----------
     def eval_node(self, node):
 
         if node is None:
@@ -87,18 +87,43 @@ class SymbolicAnalyzer:
         if isinstance(node, ast.Name):
             return self.symbols.get(node.id)
 
-        # direct request attributes (request.data etc.)
+        # request.data / request.args etc
         if isinstance(node, ast.Attribute):
             if isinstance(node.value, ast.Name) and node.value.id == "request":
                 if node.attr in REQUEST_CONTAINERS:
                     return self.new_symbol("request")
 
-        # request.args.get(...)
+        # request.args.get()
         if isinstance(node, ast.Call):
             if isinstance(node.func, ast.Attribute) and self.is_request(node.func.value):
                 sym = self.new_symbol("request")
                 sym.path.append("get")
                 return sym
+
+        # -------- FUNCTION CALL PROPAGATION (NEW) --------
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            func_name = node.func.id
+            if func_name in self.functions:
+                func_def = self.functions[func_name]
+
+                # save current state
+                old_symbols = self.symbols.copy()
+
+                # map arguments into parameters
+                for i, arg in enumerate(func_def.args.args):
+                    if i < len(node.args):
+                        self.symbols[arg.arg] = self.eval_node(node.args[i])
+
+                # execute function body
+                self.execute_block(func_def.body)
+
+                # try to read return value
+                ret_val = self.symbols.get("_return")
+
+                # restore state
+                self.symbols = old_symbols
+
+                return ret_val
 
         # sanitizers
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
@@ -107,7 +132,7 @@ class SymbolicAnalyzer:
                 if isinstance(val, SymbolicValue):
                     return val.sanitize(node.func.attr)
 
-        # string concatenation
+        # string concatenation propagation
         if isinstance(node, ast.BinOp):
             left = self.eval_node(node.left)
             right = self.eval_node(node.right)
@@ -133,7 +158,7 @@ class SymbolicAnalyzer:
                 )
             return None
 
-        # SQL INJECTION
+        # SQL
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if node.func.attr in SQL_METHODS:
                 query = self.eval_node(node.args[0])
@@ -147,7 +172,7 @@ class SymbolicAnalyzer:
                         "Use parameterized queries",
                     )
 
-        # COMMAND INJECTION
+        # COMMAND
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if node.func.attr in SUBPROCESS_METHODS:
                 shell_true = any(
@@ -167,7 +192,7 @@ class SymbolicAnalyzer:
                         "Avoid shell=True and pass arguments as a list",
                     )
 
-        # UNSAFE DESERIALIZATION
+        # DESERIALIZATION
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if node.func.attr in DESERIALIZE_METHODS:
                 val = self.eval_node(node.args[0])
@@ -183,31 +208,33 @@ class SymbolicAnalyzer:
 
         return None
 
+    # ---------- execution engine ----------
     def execute_block(self, body):
         for stmt in body:
+
+            # assignments
             if isinstance(stmt, ast.Assign) and isinstance(stmt.targets[0], ast.Name):
                 value = self.eval_node(stmt.value)
                 if isinstance(value, SymbolicValue):
                     value.path.append(stmt.targets[0].id)
                 self.symbols[stmt.targets[0].id] = value
+
+            # returns
+            elif isinstance(stmt, ast.Return):
+                self.symbols["_return"] = self.eval_node(stmt.value)
+
+            # expressions
             elif isinstance(stmt, ast.Expr):
                 self.eval_node(stmt.value)
 
     def analyze(self, tree):
-        self.execute_block(tree.body)
-
+        # collect all functions first
         for node in tree.body:
             if isinstance(node, ast.FunctionDef):
                 self.functions[node.name] = node
 
-        for func in self.functions.values():
-            old_symbols = self.symbols.copy()
-
-            for arg in func.args.args:
-                self.symbols[arg.arg] = self.new_symbol(arg.arg)
-
-            self.execute_block(func.body)
-            self.symbols = old_symbols
+        # analyze module
+        self.execute_block(tree.body)
 
 
 class AnalysisReport:
