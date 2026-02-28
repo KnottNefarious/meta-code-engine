@@ -26,6 +26,7 @@ class SymbolicValue:
 
 class SymbolicAnalyzer:
     def __init__(self):
+        # IMPORTANT: completely fresh state every run
         self.symbols = {}
         self.issues = []
         self.counter = 0
@@ -48,11 +49,19 @@ class SymbolicAnalyzer:
         if node is None:
             return None
 
+        # constants
         if isinstance(node, ast.Constant):
             return node.value
 
+        # variable reference
         if isinstance(node, ast.Name):
             return self.symbols.get(node.id)
+
+        # ⭐ direct request attribute (request.data, request.json, etc.)
+        if isinstance(node, ast.Attribute):
+            if isinstance(node.value, ast.Name) and node.value.id == "request":
+                if node.attr in REQUEST_CONTAINERS:
+                    return self.new_symbol()
 
         # request.args.get(...)
         if isinstance(node, ast.Call):
@@ -61,14 +70,14 @@ class SymbolicAnalyzer:
                 sym.path.append("get")
                 return sym
 
-        # sanitizer
+        # sanitizers (secure_filename, basename)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if node.func.attr in SAFE_PATH_FUNCS:
                 val = self.eval_node(node.args[0])
                 if isinstance(val, SymbolicValue):
                     return val.sanitize(node.func.attr)
 
-        # string concatenation
+        # string concatenation taint propagation
         if isinstance(node, ast.BinOp):
             left = self.eval_node(node.left)
             right = self.eval_node(node.right)
@@ -80,32 +89,35 @@ class SymbolicAnalyzer:
             if isinstance(right, SymbolicValue):
                 return right
 
-        # open()
+        # PATH TRAVERSAL (filesystem)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "open":
             arg_val = self.eval_node(node.args[0])
             if isinstance(arg_val, SymbolicValue) and arg_val.tainted:
                 self.issues.append("Path traversal vulnerability detected")
             return None
 
-        # SQL
+        # SQL INJECTION
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if node.func.attr in SQL_METHODS:
                 query = self.eval_node(node.args[0])
+                # parameterized queries are safe if more than 1 argument
                 if len(node.args) == 1 and isinstance(query, SymbolicValue) and query.tainted:
                     self.issues.append("SQL injection vulnerability detected")
 
-        # subprocess
+        # COMMAND INJECTION
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if node.func.attr in SUBPROCESS_METHODS:
                 shell_true = any(
-                    kw.arg == "shell" and isinstance(kw.value, ast.Constant) and kw.value.value is True
+                    kw.arg == "shell"
+                    and isinstance(kw.value, ast.Constant)
+                    and kw.value.value is True
                     for kw in node.keywords
                 )
                 cmd = self.eval_node(node.args[0])
                 if isinstance(cmd, SymbolicValue) and cmd.tainted and shell_true:
                     self.issues.append("Command injection vulnerability detected")
 
-        # deserialization
+        # UNSAFE DESERIALIZATION
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if node.func.attr in DESERIALIZE_METHODS:
                 val = self.eval_node(node.args[0])
@@ -123,16 +135,18 @@ class SymbolicAnalyzer:
 
     def analyze(self, tree):
 
-        # collect functions
+        # 1️⃣ analyze top-level module code
+        self.execute_block(tree.body)
+
+        # 2️⃣ collect functions
         for node in tree.body:
             if isinstance(node, ast.FunctionDef):
                 self.functions[node.name] = node
 
-        # simulate calling every function
+        # 3️⃣ simulate calling each function (treat parameters as attacker input)
         for func in self.functions.values():
             old_symbols = self.symbols.copy()
 
-            # parameters become attacker-controlled
             for arg in func.args.args:
                 self.symbols[arg.arg] = self.new_symbol("param")
 
@@ -148,7 +162,18 @@ class AnalysisReport:
 
 class MetaCodeEngine:
     def orchestrate(self, code):
+        # fresh analysis every time
         tree = ast.parse(code)
+
         analyzer = SymbolicAnalyzer()
+
+        # explicit reset (prevents Flask memory persistence)
+        analyzer.symbols = {}
+        analyzer.issues = []
+        analyzer.functions = {}
+        analyzer.counter = 0
+
         analyzer.analyze(tree)
-        return AnalysisReport(analyzer.issues)
+
+        # return copy (prevents mutation across requests)
+        return AnalysisReport(list(analyzer.issues))
