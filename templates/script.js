@@ -7,7 +7,7 @@ async function analyzeCode() {
 
     try {
 
-        const response = await fetch("/analyze", {
+        const response = await fetch(window.location.origin + "/analyze", {
             method: "POST",
             headers: {
                 "Content-Type": "application/json"
