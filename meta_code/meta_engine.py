@@ -3,6 +3,7 @@ import ast
 SQL_METHODS = {"execute", "executemany"}
 SUBPROCESS_METHODS = {"Popen", "run", "call"}
 DESERIALIZE_METHODS = {"loads", "load"}
+NETWORK_METHODS = {"get", "post", "put", "delete", "head", "options", "request"}
 SAFE_PATH_FUNCS = {"basename", "secure_filename"}
 REQUEST_CONTAINERS = {"args", "form", "json", "values", "headers", "cookies", "data"}
 
@@ -75,7 +76,7 @@ class SymbolicAnalyzer:
             )
         )
 
-    # -------------------- Core Evaluation --------------------
+    # ---------------- Core Evaluation ----------------
 
     def eval_node(self, node):
 
@@ -88,20 +89,20 @@ class SymbolicAnalyzer:
         if isinstance(node, ast.Name):
             return self.symbols.get(node.id)
 
-        # request.data / request.args / etc
+        # request.* sources
         if isinstance(node, ast.Attribute):
             if isinstance(node.value, ast.Name) and node.value.id == "request":
                 if node.attr in REQUEST_CONTAINERS:
                     return self.new_symbol("request")
 
-        # request.args.get()
+        # request.args.get(...)
         if isinstance(node, ast.Call):
             if isinstance(node.func, ast.Attribute) and self.is_request(node.func.value):
                 sym = self.new_symbol("request")
                 sym.path.append("get")
                 return sym
 
-        # ---------- FOLLOW FUNCTION CALLS ----------
+        # Follow function calls
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             func_name = node.func.id
             if func_name in self.functions:
@@ -109,27 +110,24 @@ class SymbolicAnalyzer:
 
                 old_symbols = self.symbols.copy()
 
-                # map arguments to parameters
                 for i, arg in enumerate(func_def.args.args):
                     if i < len(node.args):
                         self.symbols[arg.arg] = self.eval_node(node.args[i])
 
-                # execute function body
                 self.execute_block(func_def.body)
-
                 ret_val = self.symbols.get("_return")
 
                 self.symbols = old_symbols
                 return ret_val
 
-        # sanitizers
+        # Sanitizers
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if node.func.attr in SAFE_PATH_FUNCS:
                 val = self.eval_node(node.args[0])
                 if isinstance(val, SymbolicValue):
                     return val.sanitize(node.func.attr)
 
-        # string concatenation propagation
+        # String concatenation
         if isinstance(node, ast.BinOp):
             left = self.eval_node(node.left)
             right = self.eval_node(node.right)
@@ -141,7 +139,7 @@ class SymbolicAnalyzer:
             if isinstance(right, SymbolicValue):
                 return right
 
-        # PATH TRAVERSAL
+        # -------- PATH TRAVERSAL --------
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "open":
             arg_val = self.eval_node(node.args[0])
             if isinstance(arg_val, SymbolicValue) and arg_val.tainted:
@@ -155,7 +153,7 @@ class SymbolicAnalyzer:
                 )
             return None
 
-        # SQL INJECTION
+        # -------- SQL INJECTION --------
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if node.func.attr in SQL_METHODS:
                 query = self.eval_node(node.args[0])
@@ -169,7 +167,7 @@ class SymbolicAnalyzer:
                         "Use parameterized queries",
                     )
 
-        # COMMAND INJECTION
+        # -------- COMMAND INJECTION --------
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if node.func.attr in SUBPROCESS_METHODS:
                 shell_true = any(
@@ -189,7 +187,7 @@ class SymbolicAnalyzer:
                         "Avoid shell=True and pass arguments as a list",
                     )
 
-        # DESERIALIZATION
+        # -------- UNSAFE DESERIALIZATION --------
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if node.func.attr in DESERIALIZE_METHODS:
                 val = self.eval_node(node.args[0])
@@ -203,9 +201,23 @@ class SymbolicAnalyzer:
                         "Never deserialize untrusted input; use JSON instead",
                     )
 
+        # -------- SSRF (NEW) --------
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr in NETWORK_METHODS:
+                url = self.eval_node(node.args[0]) if node.args else None
+                if isinstance(url, SymbolicValue) and url.tainted:
+                    self.add_finding(
+                        "Server-Side Request Forgery (SSRF)",
+                        "HIGH",
+                        url,
+                        f"{node.func.attr}() HTTP request",
+                        "User-controlled URL used in server request",
+                        "Validate host against allowlist or block internal IP ranges",
+                    )
+
         return None
 
-    # -------------------- Execution Engine --------------------
+    # ---------------- Execution ----------------
 
     def execute_block(self, body):
         for stmt in body:
@@ -222,29 +234,21 @@ class SymbolicAnalyzer:
             elif isinstance(stmt, ast.Expr):
                 self.eval_node(stmt.value)
 
-    # -------------------- Analysis --------------------
-
     def analyze(self, tree):
 
-        # collect functions first
         for node in tree.body:
             if isinstance(node, ast.FunctionDef):
                 self.functions[node.name] = node
 
-        # run top-level code
         self.execute_block(tree.body)
 
-        # simulate calling each function (web entrypoints)
         for func in self.functions.values():
-
             old_symbols = self.symbols.copy()
 
-            # parameters = attacker input
             for arg in func.args.args:
                 self.symbols[arg.arg] = self.new_symbol(arg.arg)
 
             self.execute_block(func.body)
-
             self.symbols = old_symbols
 
 
