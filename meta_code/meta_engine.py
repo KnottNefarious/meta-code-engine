@@ -12,18 +12,6 @@ HTML_KEYWORDS = {"<html", "<div", "<script", "<h1", "<body", "<span"}
 
 # ---------------- EXPLOITABILITY SCORING ----------------
 def calculate_exploitability(vuln_type, path, sink):
-    length = len(path)
-
-    # Direct user control
-    direct = length <= 3
-
-    critical_sinks = {
-        "subprocess(shell=True)",
-        "cursor.execute(query)",
-        "pickle/yaml loads()",
-        "open(path)"
-    }
-
     if vuln_type in {"Command Injection", "Unsafe Deserialization"}:
         return "VERY LIKELY", "direct code execution possible"
 
@@ -97,21 +85,10 @@ class SymbolicAnalyzer:
         self.counter += 1
         return SymbolicValue(f"{source}_{self.counter}", True, [source])
 
-    def is_request(self, node):
-        return (
-            isinstance(node, ast.Attribute)
-            and isinstance(node.value, ast.Name)
-            and node.value.id == "request"
-            and node.attr in REQUEST_CONTAINERS
-        )
-
     def add_finding(self, vuln_type, severity, sym, sink, reason, fix):
         self.findings.append(Finding(vuln_type, severity, sym.path, sink, reason, fix))
 
-    def is_html_string(self, value):
-        return isinstance(value, str) and any(tag in value.lower() for tag in HTML_KEYWORDS)
-
-    # ---------------- CORE ANALYSIS ----------------
+    # ===================== CORE ANALYSIS =====================
 
     def eval_node(self, node):
 
@@ -124,27 +101,38 @@ class SymbolicAnalyzer:
         if isinstance(node, ast.Name):
             return self.symbols.get(node.id)
 
-        # request sources
+        # -------- Flask taint sources --------
+
+        # request.args / form / json / cookies / headers / data
+        if isinstance(node, ast.Attribute):
+            if isinstance(node.value, ast.Name) and node.value.id == "request":
+                if node.attr in REQUEST_CONTAINERS:
+                    return self.new_symbol("request")
+
+        # request.args.get(...)
         if isinstance(node, ast.Call):
-            if isinstance(node.func, ast.Attribute) and self.is_request(node.func.value):
-                sym = self.new_symbol("request")
-                sym.path.append("get")
-                return sym
+            if isinstance(node.func, ast.Attribute):
+                if isinstance(node.func.value, ast.Attribute):
+                    if isinstance(node.func.value.value, ast.Name) and node.func.value.value.id == "request":
+                        sym = self.new_symbol("request")
+                        sym.path.append("get")
+                        return sym
 
         # XSS
         if isinstance(node, ast.BinOp):
             left = self.eval_node(node.left)
             right = self.eval_node(node.right)
 
-            if isinstance(left, str) and isinstance(right, SymbolicValue) and self.is_html_string(left):
-                self.add_finding(
-                    "Cross-Site Scripting (XSS)",
-                    "HIGH",
-                    right,
-                    "HTML response",
-                    "User input embedded into HTML response",
-                    "Escape output or use templating auto-escaping",
-                )
+            if isinstance(left, str) and isinstance(right, SymbolicValue):
+                if any(tag in left.lower() for tag in HTML_KEYWORDS):
+                    self.add_finding(
+                        "Cross-Site Scripting (XSS)",
+                        "HIGH",
+                        right,
+                        "HTML response",
+                        "User input embedded into HTML response",
+                        "Escape output or use templating auto-escaping",
+                    )
 
             if isinstance(left, SymbolicValue) and isinstance(right, SymbolicValue):
                 return left.merge(right)
@@ -267,10 +255,6 @@ class SymbolicAnalyzer:
                 self.eval_node(stmt.value)
 
     def analyze(self, tree):
-        for node in tree.body:
-            if isinstance(node, ast.FunctionDef):
-                self.functions[node.name] = node
-
         self.execute_block(tree.body)
 
 
