@@ -1,126 +1,99 @@
-import os
-import io
-import ast
-import json
-import zipfile
-import traceback
-import urllib.request
-import urllib.error
-
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, request, jsonify, render_template_string
 from meta_code.meta_engine import MetaCodeEngine
+import traceback
 
 app = Flask(__name__)
+engine = MetaCodeEngine()
 
 
-# ---------------- Home ----------------
-@app.route('/')
+PAGE = """
+<!doctype html>
+<html>
+<head>
+<title>Meta-Code Engine</title>
+<style>
+body { font-family: Arial; background:#0f172a; color:white; padding:20px; }
+textarea { width:100%; height:240px; background:#020617; color:#e2e8f0; padding:10px; }
+button { padding:12px 20px; margin-top:10px; background:#22c55e; border:none; color:black; font-weight:bold; cursor:pointer; }
+pre { background:#020617; padding:15px; white-space:pre-wrap; }
+.error { color:#f87171; }
+</style>
+</head>
+<body>
+
+<h1>Meta-Code Engine</h1>
+
+<textarea id="code">
+q = request.args.get("q")
+return "<h1>" + q + "</h1>"
+</textarea>
+
+<br>
+<button onclick="analyze()">Analyze Code</button>
+
+<h2>Results</h2>
+<pre id="output"></pre>
+
+<script>
+async function analyze(){
+    const code = document.getElementById("code").value;
+
+    const res = await fetch("/analyze",{
+        method:"POST",
+        headers:{"Content-Type":"text/plain"},
+        body:code
+    });
+
+    const data = await res.json();
+
+    const out = document.getElementById("output");
+
+    if(data.error){
+        out.innerHTML = "SERVER ERROR:\\n" + data.error + "\\n\\n" + (data.trace || "");
+        return;
+    }
+
+    let text = "Issues Found: " + data.issues_found + "\\n\\n";
+    text += data.report.join("\\n\\n");
+    out.textContent = text;
+}
+</script>
+
+</body>
+</html>
+"""
+
+
+@app.route("/")
 def home():
-    return render_template('index.html')
+    return render_template_string(PAGE)
 
 
-# ---------------- Single Snippet Analysis ----------------
-@app.route('/api/analyze', methods=['POST'])
+@app.route("/analyze", methods=["POST"])
 def analyze():
     try:
-        data = request.json
-        code = data.get('code', '')
+        # Accept both raw text and JSON
+        if request.is_json:
+            user_code = request.json.get("code", "")
+        else:
+            user_code = request.data.decode("utf-8")
 
-        if not code.strip():
-            return jsonify({'success': False, 'error': 'No code provided'}), 400
+        if not user_code.strip():
+            return jsonify({"error":"No code provided"}), 400
 
-        engine = MetaCodeEngine()
-        report = engine.orchestrate(code)
-
-        return jsonify({
-            'success': True,
-            'issues_count': len(report.issues),
-            'report': "\n\n".join(report.issues)
-        })
-
-    except Exception:
-        return jsonify({'success': False, 'error': traceback.format_exc()}), 500
-
-
-# ---------------- GitHub Repository Analysis ----------------
-@app.route('/api/analyze_repo', methods=['POST'])
-def analyze_repo():
-    try:
-        data = request.json
-        repo_url = data.get("url", "").strip()
-
-        if not repo_url.startswith("https://github.com/"):
-            return jsonify({'success': False, 'error': 'Invalid GitHub URL'}), 400
-
-        # parse owner/repo
-        parts = repo_url.replace("https://github.com/", "").replace(".git", "").split("/")
-        if len(parts) < 2:
-            return jsonify({'success': False, 'error': 'Invalid repository format'}), 400
-
-        user, repo = parts[0], parts[1]
-
-        # ---- Step 1: ask GitHub what the default branch is ----
-        api_url = f"https://api.github.com/repos/{user}/{repo}"
-
-        try:
-            with urllib.request.urlopen(api_url, timeout=20) as response:
-                meta_data = json.loads(response.read().decode())
-                default_branch = meta_data.get("default_branch", "main")
-        except Exception:
-            return jsonify({'success': False, 'error': 'Could not read repository metadata from GitHub'}), 400
-
-        # ---- Step 2: download repository zip ----
-        zip_url = f"https://github.com/{user}/{repo}/archive/refs/heads/{default_branch}.zip"
-
-        try:
-            with urllib.request.urlopen(zip_url, timeout=40) as response:
-                zip_bytes = io.BytesIO(response.read())
-                z = zipfile.ZipFile(zip_bytes)
-        except Exception:
-            return jsonify({'success': False, 'error': 'Could not download repository'}), 400
-
-        # ---- Step 3: collect all python files (cross-file analysis) ----
-        collected_code = []
-
-        for filename in z.namelist():
-            if not filename.endswith(".py"):
-                continue
-
-            try:
-                content = z.read(filename).decode("utf-8", errors="ignore")
-            except Exception:
-                continue
-
-            collected_code.append(f"\n\n# ===== FILE: {filename} =====\n\n")
-            collected_code.append(content)
-
-        if not collected_code:
-            return jsonify({'success': False, 'error': 'No Python files found in repository'}), 400
-
-        final_program = "\n".join(collected_code)
-
-        # ---- Step 4: run analyzer ----
-        engine = MetaCodeEngine()
-        report = engine.orchestrate(final_program)
+        report = engine.orchestrate(user_code)
 
         return jsonify({
-            'success': True,
-            'issues_count': len(report.issues),
-            'report': "\n\n".join(report.issues)
+            "issues_found": len(report.issues),
+            "report": report.issues
         })
 
-    except Exception:
-        return jsonify({'success': False, 'error': traceback.format_exc()}), 500
+    except Exception as e:
+        return jsonify({
+            "error": str(e),
+            "trace": traceback.format_exc()
+        }), 500
 
 
-# ---------------- Health Check ----------------
-@app.route('/api/health')
-def health():
-    return jsonify({'status': 'ok'})
-
-
-# ---------------- Start Server ----------------
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    debug_mode = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
-    app.run(host='0.0.0.0', port=port, debug=debug_mode)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=3000, debug=True)
