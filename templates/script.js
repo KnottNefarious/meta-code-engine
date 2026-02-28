@@ -1,34 +1,37 @@
-// Update to handle API response properly
+async function analyzeCode() {
 
-async function displayAnalysisResults(apiResponse) {
-    const resultsContainer = document.getElementById('results');
+    const code = document.getElementById("code").value;
+    const output = document.getElementById("output");
 
-    // Clear existing results
-    resultsContainer.innerHTML = '';
+    output.textContent = "Analyzing...";
 
     try {
-        if (!apiResponse || !apiResponse.issues) {
-            throw new Error('Invalid API response');
+
+        const response = await fetch("/analyze", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ code: code })
+        });
+
+        const data = await response.json();
+
+        if (data.status !== "ok") {
+            output.textContent = "Server error:\n" + JSON.stringify(data, null, 2);
+            return;
         }
 
-        const issues = apiResponse.issues;
-        const status = apiResponse.status;
+        if (data.issue_count === 0) {
+            output.textContent = "Issues Found: 0\n\n✔ Code appears safe.";
+            return;
+        }
 
-        // Display status
-        const statusElement = document.createElement('div');
-        statusElement.innerHTML = `<h2>Status: ${status}</h2>`;
-        resultsContainer.appendChild(statusElement);
+        output.textContent =
+            "Issues Found: " + data.issue_count + "\n\n" +
+            data.issues.join("\n\n");
 
-        // Display issues
-        issues.forEach(issue => {
-            const issueElement = document.createElement('div');
-            issueElement.innerHTML = `<p>Issue: ${issue.description}</p>`;
-            resultsContainer.appendChild(issueElement);
-        });
-    } catch (error) {
-        // Handle errors
-        const errorElement = document.createElement('div');
-        errorElement.innerHTML = `<p>Error: ${error.message}</p>`;
-        resultsContainer.appendChild(errorElement);
+    } catch (err) {
+        output.textContent = "Request failed:\n" + err;
     }
 }
