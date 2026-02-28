@@ -8,10 +8,10 @@ REQUEST_CONTAINERS = {"args", "form", "json", "values", "headers", "cookies", "d
 
 
 class Finding:
-    def __init__(self, vuln_type, severity, source, sink, reason, fix):
+    def __init__(self, vuln_type, severity, path, sink, reason, fix):
         self.vuln_type = vuln_type
         self.severity = severity
-        self.source = source
+        self.path = path
         self.sink = sink
         self.reason = reason
         self.fix = fix
@@ -20,7 +20,7 @@ class Finding:
         return (
             f"{self.vuln_type}\n"
             f"Severity: {self.severity}\n"
-            f"Source: {self.source}\n"
+            f"Attack Path: {' → '.join(self.path)}\n"
             f"Sink: {self.sink}\n"
             f"Why: {self.reason}\n"
             f"Fix: {self.fix}"
@@ -36,6 +36,7 @@ class SymbolicValue:
     def sanitize(self, label):
         clean = SymbolicValue(self.name, False, list(self.path))
         clean.path.append(f"sanitized:{label}")
+        clean.tainted = False
         return clean
 
     def merge(self, other):
@@ -63,12 +64,12 @@ class SymbolicAnalyzer:
             and node.attr in REQUEST_CONTAINERS
         )
 
-    def add_finding(self, vuln_type, severity, sink, reason, fix):
+    def add_finding(self, vuln_type, severity, sym, sink, reason, fix):
         self.findings.append(
             Finding(
                 vuln_type=vuln_type,
                 severity=severity,
-                source="request input",
+                path=sym.path if isinstance(sym, SymbolicValue) else ["unknown"],
                 sink=sink,
                 reason=reason,
                 fix=fix,
@@ -86,16 +87,16 @@ class SymbolicAnalyzer:
         if isinstance(node, ast.Name):
             return self.symbols.get(node.id)
 
-        # request.data / request.json / etc
+        # direct request attributes (request.data etc.)
         if isinstance(node, ast.Attribute):
             if isinstance(node.value, ast.Name) and node.value.id == "request":
                 if node.attr in REQUEST_CONTAINERS:
-                    return self.new_symbol()
+                    return self.new_symbol("request")
 
-        # request.args.get()
+        # request.args.get(...)
         if isinstance(node, ast.Call):
             if isinstance(node.func, ast.Attribute) and self.is_request(node.func.value):
-                sym = self.new_symbol()
+                sym = self.new_symbol("request")
                 sym.path.append("get")
                 return sym
 
@@ -106,7 +107,7 @@ class SymbolicAnalyzer:
                 if isinstance(val, SymbolicValue):
                     return val.sanitize(node.func.attr)
 
-        # string propagation
+        # string concatenation
         if isinstance(node, ast.BinOp):
             left = self.eval_node(node.left)
             right = self.eval_node(node.right)
@@ -125,6 +126,7 @@ class SymbolicAnalyzer:
                 self.add_finding(
                     "Path Traversal",
                     "MEDIUM",
+                    arg_val,
                     "open(path)",
                     "User input used as filesystem path",
                     "Validate filename or use secure_filename()",
@@ -139,6 +141,7 @@ class SymbolicAnalyzer:
                     self.add_finding(
                         "SQL Injection",
                         "HIGH",
+                        query,
                         "cursor.execute(query)",
                         "User input concatenated into SQL query",
                         "Use parameterized queries",
@@ -158,12 +161,13 @@ class SymbolicAnalyzer:
                     self.add_finding(
                         "Command Injection",
                         "CRITICAL",
+                        cmd,
                         "subprocess(shell=True)",
                         "User input executed by OS shell",
                         "Avoid shell=True and pass arguments as a list",
                     )
 
-        # DESERIALIZATION RCE
+        # UNSAFE DESERIALIZATION
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if node.func.attr in DESERIALIZE_METHODS:
                 val = self.eval_node(node.args[0])
@@ -171,6 +175,7 @@ class SymbolicAnalyzer:
                     self.add_finding(
                         "Unsafe Deserialization",
                         "CRITICAL",
+                        val,
                         "pickle/yaml loads()",
                         "Untrusted data deserialized into objects",
                         "Never deserialize untrusted input; use JSON instead",
@@ -181,7 +186,10 @@ class SymbolicAnalyzer:
     def execute_block(self, body):
         for stmt in body:
             if isinstance(stmt, ast.Assign) and isinstance(stmt.targets[0], ast.Name):
-                self.symbols[stmt.targets[0].id] = self.eval_node(stmt.value)
+                value = self.eval_node(stmt.value)
+                if isinstance(value, SymbolicValue):
+                    value.path.append(stmt.targets[0].id)
+                self.symbols[stmt.targets[0].id] = value
             elif isinstance(stmt, ast.Expr):
                 self.eval_node(stmt.value)
 
@@ -196,7 +204,7 @@ class SymbolicAnalyzer:
             old_symbols = self.symbols.copy()
 
             for arg in func.args.args:
-                self.symbols[arg.arg] = self.new_symbol("param")
+                self.symbols[arg.arg] = self.new_symbol(arg.arg)
 
             self.execute_block(func.body)
             self.symbols = old_symbols
