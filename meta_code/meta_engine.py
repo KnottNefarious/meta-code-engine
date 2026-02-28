@@ -44,7 +44,6 @@ class Finding:
         self.sink = sink
         self.reason = reason
         self.fix = fix
-
         self.exploitability, self.exploit_reason = calculate_exploitability(
             vuln_type, path, sink
         )
@@ -79,7 +78,7 @@ class SymbolicAnalyzer:
         self.symbols = {}
         self.findings = []
         self.counter = 0
-        self.functions = {}
+        self.authorized_ids = set()
 
     def new_symbol(self, source="request"):
         self.counter += 1
@@ -101,9 +100,32 @@ class SymbolicAnalyzer:
         if isinstance(node, ast.Name):
             return self.symbols.get(node.id)
 
-        # -------- Flask taint sources --------
+        # -------- Authorization check detection (FINAL FIX) --------
+        if isinstance(node, ast.Compare):
 
-        # request.args / form / json / cookies / headers / data
+            left = node.left
+            right = node.comparators[0] if node.comparators else None
+
+            def is_current_user_attr(n):
+                return (
+                    isinstance(n, ast.Attribute)
+                    and isinstance(n.value, ast.Name)
+                    and n.value.id in {"current_user", "g"}
+                )
+
+            # user_id == current_user.id
+            if isinstance(left, ast.Name) and is_current_user_attr(right):
+                sym = self.symbols.get(left.id)
+                if isinstance(sym, SymbolicValue) and sym.tainted:
+                    self.authorized_ids.add(left.id)
+
+            # current_user.id == user_id
+            if isinstance(right, ast.Name) and is_current_user_attr(left):
+                sym = self.symbols.get(right.id)
+                if isinstance(sym, SymbolicValue) and sym.tainted:
+                    self.authorized_ids.add(right.id)
+
+        # -------- Flask taint sources --------
         if isinstance(node, ast.Attribute):
             if isinstance(node.value, ast.Name) and node.value.id == "request":
                 if node.attr in REQUEST_CONTAINERS:
@@ -225,14 +247,21 @@ class SymbolicAnalyzer:
                     "Restrict to internal paths",
                 )
 
-        # IDOR
+        # IDOR (authorization aware)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             obj = node.func.value
             if isinstance(obj, ast.Name) and obj.id in {"requests", "httpx", "urllib"}:
                 return None
+
             if node.func.attr in DB_FETCH_NAMES:
-                ident = self.eval_node(node.args[0])
+                arg_node = node.args[0]
+                ident = self.eval_node(arg_node)
+
                 if isinstance(ident, SymbolicValue):
+
+                    if isinstance(arg_node, ast.Name) and arg_node.id in self.authorized_ids:
+                        return None
+
                     self.add_finding(
                         "Insecure Direct Object Reference (IDOR)",
                         "HIGH",
