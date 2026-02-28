@@ -4,7 +4,7 @@ import io
 import zipfile
 import traceback
 import urllib.request
-import json
+import urllib.error
 
 from flask import Flask, render_template, request, jsonify
 from meta_code.meta_engine import MetaCodeEngine
@@ -18,7 +18,7 @@ def home():
     return render_template('index.html')
 
 
-# ---------------- SINGLE SNIPPET ----------------
+# ---------------- SINGLE SNIPPET ANALYSIS ----------------
 @app.route('/api/analyze', methods=['POST'])
 def analyze():
     try:
@@ -41,7 +41,7 @@ def analyze():
         return jsonify({'success': False, 'error': traceback.format_exc()}), 500
 
 
-# ---------------- GITHUB REPOSITORY SCANNER ----------------
+# ---------------- GITHUB REPOSITORY ANALYSIS ----------------
 @app.route('/api/analyze_repo', methods=['POST'])
 def analyze_repo():
     try:
@@ -51,79 +51,52 @@ def analyze_repo():
         if not repo_url.startswith("https://github.com/"):
             return jsonify({'success': False, 'error': 'Invalid GitHub URL'}), 400
 
-        parts = repo_url.replace("https://github.com/", "").split("/")
+        # Extract owner and repo
+        parts = repo_url.replace("https://github.com/", "").strip("/").split("/")
         if len(parts) < 2:
             return jsonify({'success': False, 'error': 'Invalid repository format'}), 400
 
-        user, repo = parts[0], parts[1]
-token = os.environ.get("GITHUB_TOKEN")
+        user, repo = parts[0], parts[1].replace(".git", "")
 
-headers = {
-    "User-Agent": "MetaCodeEngine-Scanner",
-}
+        # ---------- DIRECT DOWNLOAD (NO API, NO REQUESTS LIB) ----------
+        def try_download(branch):
+            zip_url = f"https://github.com/{user}/{repo}/archive/refs/heads/{branch}.zip"
+            try:
+                with urllib.request.urlopen(zip_url, timeout=40) as response:
+                    return response.read()
+            except urllib.error.HTTPError:
+                return None
+            except urllib.error.URLError:
+                return None
 
-if token:
-    headers["Authorization"] = f"token {token}"
+        zip_content = None
 
-        # ---- 1) Ask GitHub for default branch ----
-        try:
-            api_url = f"https://api.github.com/repos/{user}/{repo}"
-            req = urllib.request.Request(api_url, headers=headers)
+        # Try common branch names
+        for branch in ["main", "master"]:
+            zip_content = try_download(branch)
+            if zip_content:
+                break
 
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                repo_data = json.loads(resp.read().decode("utf-8"))
+        if not zip_content:
+            return jsonify({
+                'success': False,
+                'error': 'Could not download repository (private repo or unsupported branch)'
+            }), 400
 
-            default_branch = repo_data.get("default_branch", "main")
-
-        except Exception:
-            return jsonify({'success': False, 'error': 'GitHub rejected metadata request (repo missing, private, or rate-limited)'}), 400
-
-        # ---- 2) Download repository ZIP ----
-        try:
-            zip_url = f"https://github.com/{user}/{repo}/archive/refs/heads/{default_branch}.zip"
-            zip_req = urllib.request.Request(zip_url, headers=headers)
-
-            with urllib.request.urlopen(zip_req, timeout=30) as resp:
-                zip_bytes = io.BytesIO(resp.read())
-
-        except Exception:
-            return jsonify({'success': False, 'error': 'Failed to download repository archive'}), 400
-
+        # ---------- UNZIP ----------
+        zip_bytes = io.BytesIO(zip_content)
         z = zipfile.ZipFile(zip_bytes)
 
         definitions = []
         top_level = []
 
-        # -------- LARGE REPOSITORY FILTER --------
-        SKIP_FOLDERS = [
-            "venv/", ".venv/", "env/",
-            "node_modules/",
-            "tests/", "test/",
-            "docs/", "examples/",
-            "build/", "dist/",
-            "__pycache__/",
-            ".git/",
-            "site-packages/"
-        ]
-
         for filename in z.namelist():
-
             if not filename.endswith(".py"):
-                continue
-
-            # Skip dependency & non-app folders
-            if any(folder in filename for folder in SKIP_FOLDERS):
-                continue
-
-            # Skip very large files (prevents crashes)
-            try:
-                if z.getinfo(filename).file_size > 200000:  # 200KB
-                    continue
-            except Exception:
                 continue
 
             content = z.read(filename).decode("utf-8", errors="ignore")
 
+            # Remove imports (prevents missing dependency parse errors)
             cleaned_lines = []
             for line in content.splitlines():
                 stripped = line.strip()
@@ -149,14 +122,15 @@ if token:
                     top_level.append(segment)
 
         if not definitions and not top_level:
-            return jsonify({'success': False, 'error': 'No analyzable Python application code found'}), 400
+            return jsonify({'success': False, 'error': 'No analyzable Python code found'}), 400
 
-        # Build virtual program
+        # Combine into one analyzable program
         final_program = "import os\n\n"
         final_program += "\n\n".join(definitions)
         final_program += "\n\n"
         final_program += "\n".join(top_level)
 
+        # ---------- ANALYZE ----------
         engine = MetaCodeEngine()
         report = engine.orchestrate(final_program)
 
@@ -170,12 +144,13 @@ if token:
         return jsonify({'success': False, 'error': traceback.format_exc()}), 500
 
 
+# ---------------- HEALTH ----------------
 @app.route('/api/health')
 def health():
     return jsonify({'status': 'ok'})
 
 
-# ---------------- RUN ----------------
+# ---------------- RUN SERVER ----------------
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     debug_mode = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
