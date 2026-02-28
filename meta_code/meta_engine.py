@@ -8,8 +8,9 @@ REQUEST_CONTAINERS = {"args", "form", "json", "values", "headers", "cookies", "d
 
 
 class Finding:
-    def __init__(self, vuln_type, source, sink, reason, fix):
+    def __init__(self, vuln_type, severity, source, sink, reason, fix):
         self.vuln_type = vuln_type
+        self.severity = severity
         self.source = source
         self.sink = sink
         self.reason = reason
@@ -18,6 +19,7 @@ class Finding:
     def format(self):
         return (
             f"{self.vuln_type}\n"
+            f"Severity: {self.severity}\n"
             f"Source: {self.source}\n"
             f"Sink: {self.sink}\n"
             f"Why: {self.reason}\n"
@@ -61,10 +63,11 @@ class SymbolicAnalyzer:
             and node.attr in REQUEST_CONTAINERS
         )
 
-    def add_finding(self, vuln_type, sink, reason, fix):
+    def add_finding(self, vuln_type, severity, sink, reason, fix):
         self.findings.append(
             Finding(
                 vuln_type=vuln_type,
+                severity=severity,
                 source="request input",
                 sink=sink,
                 reason=reason,
@@ -121,6 +124,7 @@ class SymbolicAnalyzer:
             if isinstance(arg_val, SymbolicValue) and arg_val.tainted:
                 self.add_finding(
                     "Path Traversal",
+                    "MEDIUM",
                     "open(path)",
                     "User input used as filesystem path",
                     "Validate filename or use secure_filename()",
@@ -134,6 +138,7 @@ class SymbolicAnalyzer:
                 if len(node.args) == 1 and isinstance(query, SymbolicValue) and query.tainted:
                     self.add_finding(
                         "SQL Injection",
+                        "HIGH",
                         "cursor.execute(query)",
                         "User input concatenated into SQL query",
                         "Use parameterized queries",
@@ -152,6 +157,7 @@ class SymbolicAnalyzer:
                 if isinstance(cmd, SymbolicValue) and cmd.tainted and shell_true:
                     self.add_finding(
                         "Command Injection",
+                        "CRITICAL",
                         "subprocess(shell=True)",
                         "User input executed by OS shell",
                         "Avoid shell=True and pass arguments as a list",
@@ -164,6 +170,7 @@ class SymbolicAnalyzer:
                 if isinstance(val, SymbolicValue) and val.tainted:
                     self.add_finding(
                         "Unsafe Deserialization",
+                        "CRITICAL",
                         "pickle/yaml loads()",
                         "Untrusted data deserialized into objects",
                         "Never deserialize untrusted input; use JSON instead",
