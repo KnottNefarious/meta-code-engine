@@ -20,6 +20,13 @@ It tracks untrusted data from web request sources and determines whether it can 
 
 The engine also understands defensive code (authorization checks), allowing it to avoid many false positives.
 
+What most beginner analyzers do:
+pattern matching
+
+what mine does:
+data flow tracking (taint analysis)
++ semantic authorization reasoning
+(IDOR + Missing Authorization) is the unusual part — many simple open-source scanners don’t even attempt that.
 ---
  
 Detected Vulnerabilities 👌
