@@ -69,6 +69,25 @@ Each finding includes:
 - Suggested fix
 
 ---
+Three working layers:
+
+   1.Source detection
+   •Flask request taint source
+
+   2.Propagation engine
+   •Variable assignment tracking
+   •Branch awareness
+
+   3.Sink reasoning
+   •HTML response detection
+   •SQL query detection
+   •File system detection
+
+Together form the classic model:
+   •Source → Flow → Sink
+     
+That model is exactly how professional SAST tools are designed.
+---
 
 Example Output 📝
 
