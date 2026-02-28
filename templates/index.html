@@ -1,67 +1,59 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Meta-Code Engine</title>
 
 <style>
 body{
     background:#0f172a;
     color:#e2e8f0;
-    font-family:Arial,Helvetica,sans-serif;
-    padding:18px;
+    font-family: monospace;
+    padding:20px;
 }
+
 h1{
     color:#38bdf8;
-    text-align:center;
 }
+
 textarea{
     width:100%;
-    height:260px;
+    height:300px;
     background:#020617;
-    color:#f8fafc;
+    color:#e2e8f0;
     border:1px solid #334155;
     padding:10px;
-    font-family:monospace;
     font-size:14px;
-    border-radius:8px;
 }
-input[type="file"], input[type="text"]{
-    width:100%;
-    background:#020617;
-    color:#fff;
-    border:1px solid #334155;
-    padding:10px;
-    border-radius:8px;
-}
+
 button{
-    background:#0284c7;
+    background:#0ea5e9;
     color:white;
+    padding:10px 18px;
     border:none;
-    padding:12px 18px;
-    border-radius:8px;
-    font-size:16px;
     margin-top:10px;
     cursor:pointer;
+    font-weight:bold;
 }
+
 button:hover{
-    background:#0369a1;
+    background:#0284c7;
 }
-pre{
-    background:#020617;
-    border:1px solid #334155;
-    padding:12px;
-    border-radius:8px;
+
+#output{
+    margin-top:20px;
     white-space:pre-wrap;
-    margin-top:14px;
 }
-hr{
-    margin:35px 0;
-    border:1px solid #334155;
+
+.issue{
+    border-left:4px solid #ef4444;
+    padding:10px;
+    margin-top:12px;
+    background:#020617;
 }
-.section{
-    margin-top:25px;
+
+.safe{
+    color:#22c55e;
+    font-weight:bold;
 }
 </style>
 </head>
@@ -70,140 +62,49 @@ hr{
 
 <h1>Meta-Code Engine</h1>
 
-<!-- ---------------- SINGLE CODE ---------------- -->
-<div class="section">
-<h2>Analyze Single Python Code</h2>
+<textarea id="code">
+q = request.args.get("q")
+return "<h1>" + q + "</h1>"
+</textarea>
 
-<textarea id="codeInput" placeholder="Paste Python code here..."></textarea>
 <br>
-<button onclick="analyzeCode()">Analyze Code</button>
+<button onclick="runAnalysis()">Analyze Code</button>
 
-<pre id="result">Results will appear here...</pre>
-</div>
-
-<hr>
-
-<!-- ---------------- MULTI FILE UPLOAD ---------------- -->
-<div class="section">
-<h2>Analyze Full Project (Upload .py Files)</h2>
-
-<input type="file" id="projectFiles" multiple accept=".py">
-<br>
-<button onclick="analyzeProject()">Analyze Uploaded Project</button>
-
-<pre id="projectResult">Upload multiple Python files to scan an entire project.</pre>
-</div>
-
-<hr>
-
-<!-- ---------------- GITHUB SCANNER ---------------- -->
-<div class="section">
-<h2>Scan a GitHub Repository</h2>
-
-<input id="repoUrl" type="text" placeholder="https://github.com/username/repository">
-<br>
-<button onclick="scanRepo()">Scan Repository</button>
-
-<pre id="repoResult">Paste a public GitHub repository URL and press scan.</pre>
-</div>
+<div id="output"></div>
 
 <script>
+async function runAnalysis(){
 
-async function analyzeCode(){
-    const code=document.getElementById("codeInput").value;
-    document.getElementById("result").textContent="Analyzing...";
+    const code = document.getElementById("code").value;
 
-    try{
-        const response=await fetch("/api/analyze",{
-            method:"POST",
-            headers:{"Content-Type":"application/json"},
-            body:JSON.stringify({code:code})
-        });
+    const res = await fetch("/analyze",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({code:code})
+    });
 
-        const data=await response.json();
+    const data = await res.json();
 
-        if(!data.success){
-            document.getElementById("result").textContent="Error: "+data.error;
-            return;
-        }
+    const output = document.getElementById("output");
+    output.innerHTML = "";
 
-        document.getElementById("result").textContent=
-            "Issues Found: "+data.issues_count+"\n\n"+data.report;
-
-    }catch(err){
-        document.getElementById("result").textContent="Request failed: "+err;
-    }
-}
-
-async function analyzeProject(){
-    const files=document.getElementById("projectFiles").files;
-
-    if(!files.length){
-        alert("Please select one or more Python files.");
+    if(data.status !== "ok"){
+        output.innerText = "Server Error: " + data.error;
         return;
     }
 
-    const formData=new FormData();
-
-    for(let i=0;i<files.length;i++){
-        formData.append("files",files[i]);
-    }
-
-    document.getElementById("projectResult").textContent="Uploading and analyzing project...";
-
-    try{
-        const response=await fetch("/api/analyze_project",{
-            method:"POST",
-            body:formData
-        });
-
-        const data=await response.json();
-
-        if(!data.success){
-            document.getElementById("projectResult").textContent="Error: "+data.error;
-            return;
-        }
-
-        document.getElementById("projectResult").textContent=
-            "Issues Found: "+data.issues_count+"\n\n"+data.report;
-
-    }catch(err){
-        document.getElementById("projectResult").textContent="Upload failed: "+err;
-    }
-}
-
-async function scanRepo(){
-    const url=document.getElementById("repoUrl").value.trim();
-
-    if(!url){
-        alert("Enter a GitHub repository URL");
+    if(data.issues.length === 0){
+        output.innerHTML = '<div class="safe">✔ No vulnerabilities found</div>';
         return;
     }
 
-    document.getElementById("repoResult").textContent="Downloading repository and analyzing... (can take 10–30 seconds)";
-
-    try{
-        const response=await fetch("/api/analyze_repo",{
-            method:"POST",
-            headers:{"Content-Type":"application/json"},
-            body:JSON.stringify({url:url})
-        });
-
-        const data=await response.json();
-
-        if(!data.success){
-            document.getElementById("repoResult").textContent="Error:\n"+data.error;
-            return;
-        }
-
-        document.getElementById("repoResult").textContent=
-            "Issues Found: "+data.issues_count+"\n\n"+data.report;
-
-    }catch(err){
-        document.getElementById("repoResult").textContent="Request failed:\n"+err;
-    }
+    data.issues.forEach(issue=>{
+        const div = document.createElement("div");
+        div.className = "issue";
+        div.innerText = issue;
+        output.appendChild(div);
+    });
 }
-
 </script>
 
 </body>
