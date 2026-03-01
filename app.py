@@ -63,6 +63,8 @@ def upload_file():
             file.stream.seek(0)
             raw = file.stream.read()
 
+if len(raw) > 200_000:
+    return jsonify({"error": "File too large to analyze safely"}), 400
             if not raw:
                 continue
 
