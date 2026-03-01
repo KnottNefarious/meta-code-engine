@@ -5,113 +5,89 @@ import zipfile
 import requests
 
 app = Flask(__name__)
-
 engine = MetaCodeEngine()
 
-# ---------------- UI ----------------
+
 @app.get("/")
 def index():
     return render_template("index.html")
 
 
-# ---------------- health check ----------------
 @app.get("/health")
 def health():
     return jsonify({"status": "alive"})
 
 
-# ---------------- analyze pasted code ----------------
+# -------- analyze pasted code --------
 @app.post("/analyze")
 def analyze_code():
-    try:
-        data = request.get_json(silent=True)
+    data = request.get_json()
+    code = data.get("code", "")
 
-        if not data or "code" not in data:
-            return jsonify({"error": "No code provided"}), 400
+    report = engine.orchestrate(code)
 
-        code = data["code"]
+    if not report.issues:
+        return jsonify({"result": "No vulnerabilities found."})
 
-        report = engine.orchestrate(code)
-
-        if not report.issues:
-            return jsonify({"result": "No vulnerabilities found."})
-
-        return jsonify({"result": "\n\n".join(report.issues)})
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    return jsonify({"result": "\n\n".join(report.issues)})
 
 
-# ---------------- upload python file ----------------
+# -------- upload multiple files --------
 @app.post("/upload")
 def upload_file():
-    try:
-        if "file" not in request.files:
-            return jsonify({"error": "No file uploaded"}), 400
+    files = request.files.getlist("file")
 
-        file = request.files["file"]
+    findings = []
 
+    for file in files:
         if not file.filename.endswith(".py"):
-            return jsonify({"error": "Only .py files allowed"}), 400
+            continue
 
         code = file.read().decode(errors="ignore")
-
         report = engine.orchestrate(code)
 
-        if not report.issues:
-            return jsonify({"result": "No vulnerabilities found."})
+        for issue in report.issues:
+            findings.append(f"{file.filename}\n{issue}\n")
 
-        return jsonify({"result": "\n\n".join(report.issues)})
+    if not findings:
+        return jsonify({"result": "No vulnerabilities found."})
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    return jsonify({"result": "\n".join(findings)})
 
 
-# ---------------- GitHub repo scanner ----------------
-@app.post("/analyze_repo")   # <-- IMPORTANT FIX
+# -------- github scan --------
+@app.post("/github")
 def analyze_github():
-    try:
-        data = request.get_json(silent=True)
+    data = request.get_json()
+    repo_url = data.get("repo")
 
-        if not data or "repo" not in data:
-            return jsonify({"error": "No repository URL provided"}), 400
+    parts = repo_url.replace("https://github.com/", "").split("/")
+    owner, repo = parts[0], parts[1]
 
-        repo_url = data["repo"]
+    api_url = f"https://api.github.com/repos/{owner}/{repo}"
+    info = requests.get(api_url, timeout=15)
+    default_branch = info.json().get("default_branch", "main")
 
-        if not repo_url.startswith("https://github.com/"):
-            return jsonify({"error": "Only GitHub repositories allowed"}), 400
+    zip_url = f"https://github.com/{owner}/{repo}/archive/refs/heads/{default_branch}.zip"
+    r = requests.get(zip_url, timeout=40)
 
-        if repo_url.endswith("/"):
-            repo_url = repo_url[:-1]
+    z = zipfile.ZipFile(io.BytesIO(r.content))
 
-        zip_url = repo_url + "/archive/refs/heads/main.zip"
+    findings = []
 
-        r = requests.get(zip_url, timeout=30)
+    for filename in z.namelist():
+        if filename.endswith(".py"):
+            code = z.read(filename).decode(errors="ignore")
+            report = engine.orchestrate(code)
 
-        if r.status_code != 200:
-            return jsonify({"error": "Could not download repo (wrong branch or private repo)"}), 400
+            for issue in report.issues:
+                findings.append(f"{filename}\n{issue}\n")
 
-        z = zipfile.ZipFile(io.BytesIO(r.content))
+    if not findings:
+        return jsonify({"result": "No vulnerabilities found."})
 
-        findings = []
-
-        for filename in z.namelist():
-            if filename.endswith(".py"):
-                code = z.read(filename).decode(errors="ignore")
-                report = engine.orchestrate(code)
-
-                for issue in report.issues:
-                    findings.append(f"{filename}\n{issue}\n")
-
-        if not findings:
-            return jsonify({"result": "No vulnerabilities found."})
-
-        return jsonify({"result": "\n".join(findings)})
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    return jsonify({"result": "\n".join(findings))
 
 
-# ---------------- run ----------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
