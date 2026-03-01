@@ -13,7 +13,7 @@ Instead of simple pattern matching, the engine performs taint flow + control-flo
 
 ---
 
-[![Launch Meta-Code-Engine](pictures/assets/ezgif.com-animated-gif-maker.gif)](https://20af8bd1-6406-4c04-8c1a-b8012ca55334-00-17nko5zx65rb3.riker.replit.dev/)
+[![Launch Meta-Code-Engine](https://raw.githubusercontent.com/KnottNefarious/meta-code-engine/d7d2748c6af93b6507e62ed9e1bdde0b3b82549f/pictures/Assets/ezgif.com-animated-gif-maker.gif)](https://20af8bd1-6406-4c04-8c1a-b8012ca55334-00-17nko5zx65rb3.riker.replit.dev/)
 
 What It Does 🐍...
 
