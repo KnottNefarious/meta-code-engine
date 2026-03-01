@@ -4,168 +4,200 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Meta-Code-Engine</title>
-
 <style>
+
+:root{
+    --bg:#0b1220;
+    --panel:#111a2e;
+    --panel2:#0d1627;
+    --accent:#3b82f6;
+    --accentHover:#2563eb;
+    --text:#e5e7eb;
+    --muted:#94a3b8;
+    --border:#1f2a44;
+    --danger:#ef4444;
+    --warn:#f59e0b;
+    --good:#22c55e;
+}
+
 body{
-    background:#0f172a;
-    color:#e2e8f0;
-    font-family:monospace;
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu;
+    background:linear-gradient(180deg,#0b1220,#050814);
+    color:var(--text);
     margin:0;
-    padding:0;
+    padding:22px;
 }
 
-header{
-    background:#020617;
-    padding:14px;
+h1{
     text-align:center;
-    font-size:20px;
-    font-weight:bold;
-    border-bottom:1px solid #1e293b;
+    margin-bottom:28px;
+    font-weight:600;
+    letter-spacing:.5px;
 }
 
-.container{
-    padding:14px;
+h2{
+    margin-top:0;
+    color:#cbd5f5;
+}
+
+.panel{
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:14px;
+    padding:20px;
+    margin-bottom:28px;
+    box-shadow:0 10px 25px rgba(0,0,0,.45);
+    transition:.2s;
+}
+
+.panel:hover{
+    transform:translateY(-2px);
+    box-shadow:0 14px 35px rgba(0,0,0,.55);
 }
 
 textarea{
     width:100%;
     height:220px;
-    background:#020617;
-    color:#e2e8f0;
-    border:1px solid #334155;
-    padding:10px;
+    background:var(--panel2);
+    color:#c7f9cc;
+    border:1px solid var(--border);
+    padding:12px;
+    border-radius:10px;
+    font-family:Consolas,monospace;
     resize:vertical;
+    font-size:14px;
+}
+
+input[type="text"], input[type="file"]{
+    width:100%;
+    padding:12px;
+    border-radius:10px;
+    border:1px solid var(--border);
+    background:var(--panel2);
+    color:var(--text);
+    margin-top:5px;
 }
 
 button{
-    background:#2563eb;
-    color:white;
+    margin-top:14px;
+    padding:11px 18px;
     border:none;
-    padding:10px 14px;
-    margin-top:8px;
+    border-radius:10px;
+    background:var(--accent);
+    color:white;
+    font-weight:600;
+    letter-spacing:.4px;
     cursor:pointer;
-    font-weight:bold;
+    transition:.2s;
 }
 
 button:hover{
-    background:#1d4ed8;
+    background:var(--accentHover);
 }
 
-input[type="text"]{
-    width:100%;
+.result{
+    margin-top:14px;
     background:#020617;
-    color:white;
-    border:1px solid #334155;
-    padding:8px;
-}
-
-hr{
-    border:0;
-    border-top:1px solid #334155;
-    margin:18px 0;
-}
-
-#output{
-    white-space:pre-wrap;
-    background:#020617;
-    border:1px solid #334155;
+    border:1px solid var(--border);
+    border-radius:10px;
     padding:12px;
-    margin-top:12px;
-    min-height:160px;
+    white-space:pre-wrap;
+    min-height:140px;
+    font-family:Consolas,monospace;
+    font-size:14px;
+    color:#facc15;
+    overflow:auto;
 }
+
+.result:empty::before{
+    content:"Results will appear here...";
+    color:var(--muted);
+}
+
 </style>
 </head>
 
 <body>
 
-<header>Meta-Code-Engine — Static Security Analyzer</header>
+<h1>Meta-Code-Engine Static Analyzer</h1>
 
-<div class="container">
+<!-- SNIPPET ANALYZER -->
+<div class="panel">
+<h2>Analyze Code Snippet</h2>
+<textarea id="codeInput" placeholder="Paste Python code here..."></textarea>
+<button onclick="analyzeSnippet()">Analyze Snippet</button>
+<div id="snippetResult" class="result"></div>
+</div>
 
-<h3>Analyze Code Snippet</h3>
-<textarea id="code" placeholder="Paste Python code here..."></textarea>
-<button onclick="analyze()">Analyze</button>
+<!-- FILE UPLOAD -->
+<div class="panel">
+<h2>Upload Python File</h2>
+<input type="file" id="fileInput" accept=".py">
+<button onclick="uploadFile()">Analyze File</button>
+<div id="fileResult" class="result"></div>
+</div>
 
-<hr>
-
-<h3>Upload Python Files (Phone or PC)</h3>
-<input type="file" id="fileInput" multiple accept=".py">
-<button onclick="uploadFiles()">Scan Uploaded Files</button>
-
-<hr>
-
-<h3>Scan GitHub Repository</h3>
-<input type="text" id="githubUrl" placeholder="https://github.com/user/repository">
-<button onclick="scanGithub()">Scan GitHub Repo</button>
-
-<hr>
-
-<h3>Results</h3>
-<div id="output">Waiting for analysis...</div>
-
+<!-- GITHUB SCANNER -->
+<div class="panel">
+<h2>Scan GitHub Repository</h2>
+<input type="text" id="repoInput" placeholder="https://github.com/user/repository">
+<button onclick="scanRepo()">Scan Repository</button>
+<div id="repoResult" class="result"></div>
 </div>
 
 <script>
 
-async function analyze(){
-    const code = document.getElementById("code").value;
+async function analyzeSnippet(){
+    const code=document.getElementById("codeInput").value;
+    const box=document.getElementById("snippetResult");
+    box.textContent="Analyzing...";
 
-    const res = await fetch("/analyze",{
+    const res=await fetch("/analyze",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({code:code})
     });
 
-    const data = await res.json();
-    displayResults(data);
+    const data=await res.json();
+    box.textContent=data.result || data.error;
 }
 
-async function uploadFiles(){
-    const files = document.getElementById("fileInput").files;
-    const formData = new FormData();
+async function uploadFile(){
+    const file=document.getElementById("fileInput").files[0];
+    const box=document.getElementById("fileResult");
 
-    for(let f of files){
-        formData.append("files",f);
+    if(!file){
+        box.textContent="Select a .py file first.";
+        return;
     }
 
-    const res = await fetch("/upload",{
+    const formData=new FormData();
+    formData.append("file",file);
+
+    box.textContent="Analyzing file...";
+
+    const res=await fetch("/upload",{
         method:"POST",
         body:formData
     });
 
-    const data = await res.json();
-    displayResults(data);
+    const data=await res.json();
+    box.textContent=data.result || data.error;
 }
 
-async function scanGithub(){
-    const url = document.getElementById("githubUrl").value;
+async function scanRepo(){
+    const repo=document.getElementById("repoInput").value;
+    const box=document.getElementById("repoResult");
+    box.textContent="Scanning repository (may take ~15s)...";
 
-    const res = await fetch("/github",{
+    const res=await fetch("/github",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({url:url})
+        body:JSON.stringify({repo:repo})
     });
 
-    const data = await res.json();
-    displayResults(data);
-}
-
-function displayResults(data){
-    const out = document.getElementById("output");
-
-    if(data.error){
-        out.textContent = "Error: " + data.error;
-        return;
-    }
-
-    if(!data.issues || data.issues.length === 0){
-        out.textContent = "No vulnerabilities detected ✔";
-        return;
-    }
-
-    out.textContent =
-        "Issues Found: " + data.issues.length + "\n\n" +
-        data.issues.join("\n\n--------------------------------\n\n");
+    const data=await res.json();
+    box.textContent=data.result || data.error;
 }
 
 </script>
