@@ -1,205 +1,62 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Meta-Code-Engine</title>
+<title>Meta Code Engine</title>
 <style>
-
-:root{
-    --bg:#0b1220;
-    --panel:#111a2e;
-    --panel2:#0d1627;
-    --accent:#3b82f6;
-    --accentHover:#2563eb;
-    --text:#e5e7eb;
-    --muted:#94a3b8;
-    --border:#1f2a44;
-    --danger:#ef4444;
-    --warn:#f59e0b;
-    --good:#22c55e;
-}
-
-body{
-    font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu;
-    background:linear-gradient(180deg,#0b1220,#050814);
-    color:var(--text);
-    margin:0;
-    padding:22px;
-}
-
-h1{
-    text-align:center;
-    margin-bottom:28px;
-    font-weight:600;
-    letter-spacing:.5px;
-}
-
-h2{
-    margin-top:0;
-    color:#cbd5f5;
-}
-
-.panel{
-    background:var(--panel);
-    border:1px solid var(--border);
-    border-radius:14px;
-    padding:20px;
-    margin-bottom:28px;
-    box-shadow:0 10px 25px rgba(0,0,0,.45);
-    transition:.2s;
-}
-
-.panel:hover{
-    transform:translateY(-2px);
-    box-shadow:0 14px 35px rgba(0,0,0,.55);
-}
-
-textarea{
-    width:100%;
-    height:220px;
-    background:var(--panel2);
-    color:#c7f9cc;
-    border:1px solid var(--border);
-    padding:12px;
-    border-radius:10px;
-    font-family:Consolas,monospace;
-    resize:vertical;
-    font-size:14px;
-}
-
-input[type="text"], input[type="file"]{
-    width:100%;
-    padding:12px;
-    border-radius:10px;
-    border:1px solid var(--border);
-    background:var(--panel2);
-    color:var(--text);
-    margin-top:5px;
-}
-
-button{
-    margin-top:14px;
-    padding:11px 18px;
-    border:none;
-    border-radius:10px;
-    background:var(--accent);
-    color:white;
-    font-weight:600;
-    letter-spacing:.4px;
-    cursor:pointer;
-    transition:.2s;
-}
-
-button:hover{
-    background:var(--accentHover);
-}
-
-.result{
-    margin-top:14px;
-    background:#020617;
-    border:1px solid var(--border);
-    border-radius:10px;
-    padding:12px;
-    white-space:pre-wrap;
-    min-height:140px;
-    font-family:Consolas,monospace;
-    font-size:14px;
-    color:#facc15;
-    overflow:auto;
-}
-
-.result:empty::before{
-    content:"Results will appear here...";
-    color:var(--muted);
-}
-
+body{font-family:monospace;background:#0f172a;color:#e5e7eb;padding:20px}
+textarea{width:100%;height:180px;background:#020617;color:#e5e7eb}
+button{padding:10px;margin-top:10px}
+pre{background:#020617;padding:12px;white-space:pre-wrap}
+.section{margin-bottom:40px;border:1px solid #334155;padding:15px}
 </style>
 </head>
 
 <body>
 
-<h1>Meta-Code-Engine Static Analyzer</h1>
+<h1>Meta-Code-Engine</h1>
 
-<!-- SNIPPET ANALYZER -->
-<div class="panel">
+<div class="section">
 <h2>Analyze Code Snippet</h2>
-<textarea id="codeInput" placeholder="Paste Python code here..."></textarea>
-<button onclick="analyzeSnippet()">Analyze Snippet</button>
-<div id="snippetResult" class="result"></div>
+<textarea id="code"></textarea><br>
+<button onclick="analyze()">Analyze</button>
+<pre id="result1"></pre>
 </div>
 
-<!-- FILE UPLOAD -->
-<div class="panel">
-<h2>Upload Python File</h2>
-<input type="file" id="fileInput" accept=".py">
-<button onclick="uploadFile()">Analyze File</button>
-<div id="fileResult" class="result"></div>
+<div class="section">
+<h2>Upload Python Files</h2>
+<input type="file" id="fileInput" multiple accept=".py"><br>
+<button onclick="upload()">Scan Files</button>
+<pre id="result2"></pre>
 </div>
 
-<!-- GITHUB SCANNER -->
-<div class="panel">
+<div class="section">
 <h2>Scan GitHub Repository</h2>
-<input type="text" id="repoInput" placeholder="https://github.com/user/repository">
-<button onclick="scanRepo()">Scan Repository</button>
-<div id="repoResult" class="result"></div>
+<input type="text" id="repo" placeholder="https://github.com/user/repo"><br>
+<button onclick="github()">Scan Repo</button>
+<pre id="result3"></pre>
 </div>
 
 <script>
-
-async function analyzeSnippet(){
-    const code=document.getElementById("codeInput").value;
-    const box=document.getElementById("snippetResult");
-    box.textContent="Analyzing...";
-
-    const res=await fetch("/analyze",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({code:code})
-    });
-
-    const data=await res.json();
-    box.textContent=data.result || data.error;
+async function analyze(){
+const r=await fetch("/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({code:code.value})});
+const j=await r.json();
+result1.textContent=j.result||j.error;
 }
 
-async function uploadFile(){
-    const file=document.getElementById("fileInput").files[0];
-    const box=document.getElementById("fileResult");
-
-    if(!file){
-        box.textContent="Select a .py file first.";
-        return;
-    }
-
-    const formData=new FormData();
-    formData.append("file",file);
-
-    box.textContent="Analyzing file...";
-
-    const res=await fetch("/upload",{
-        method:"POST",
-        body:formData
-    });
-
-    const data=await res.json();
-    box.textContent=data.result || data.error;
+async function upload(){
+const fd=new FormData();
+for(const f of fileInput.files){fd.append("file",f);}
+const r=await fetch("/upload",{method:"POST",body:fd});
+const j=await r.json();
+result2.textContent=j.result||j.error;
 }
 
-async function scanRepo(){
-    const repo=document.getElementById("repoInput").value;
-    const box=document.getElementById("repoResult");
-    box.textContent="Scanning repository (may take ~15s)...";
-
-    const res=await fetch("/github",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({repo:repo})
-    });
-
-    const data=await res.json();
-    box.textContent=data.result || data.error;
+async function github(){
+result3.textContent="Scanning repository...";
+const r=await fetch("/github",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({repo:repo.value})});
+const j=await r.json();
+result3.textContent=j.result||j.error;
 }
-
 </script>
 
 </body>
