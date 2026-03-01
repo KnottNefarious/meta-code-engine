@@ -1,80 +1,113 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<title>Meta-Code Engine</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Meta-Code-Engine</title>
 
 <style>
 body{
     background:#0f172a;
     color:#e2e8f0;
-    font-family: monospace;
-    padding:20px;
+    font-family:monospace;
+    margin:0;
+    padding:0;
 }
 
-h1{
-    color:#38bdf8;
+header{
+    background:#020617;
+    padding:14px;
+    text-align:center;
+    font-size:20px;
+    font-weight:bold;
+    border-bottom:1px solid #1e293b;
+}
+
+.container{
+    padding:14px;
 }
 
 textarea{
     width:100%;
-    height:300px;
+    height:220px;
     background:#020617;
     color:#e2e8f0;
     border:1px solid #334155;
     padding:10px;
-    font-size:14px;
+    resize:vertical;
 }
 
 button{
-    background:#0ea5e9;
+    background:#2563eb;
     color:white;
-    padding:10px 18px;
     border:none;
-    margin-top:10px;
+    padding:10px 14px;
+    margin-top:8px;
     cursor:pointer;
     font-weight:bold;
 }
 
 button:hover{
-    background:#0284c7;
+    background:#1d4ed8;
+}
+
+input[type="text"]{
+    width:100%;
+    background:#020617;
+    color:white;
+    border:1px solid #334155;
+    padding:8px;
+}
+
+hr{
+    border:0;
+    border-top:1px solid #334155;
+    margin:18px 0;
 }
 
 #output{
-    margin-top:20px;
     white-space:pre-wrap;
-}
-
-.issue{
-    border-left:4px solid #ef4444;
-    padding:10px;
-    margin-top:12px;
     background:#020617;
-}
-
-.safe{
-    color:#22c55e;
-    font-weight:bold;
+    border:1px solid #334155;
+    padding:12px;
+    margin-top:12px;
+    min-height:160px;
 }
 </style>
 </head>
 
 <body>
 
-<h1>Meta-Code Engine</h1>
+<header>Meta-Code-Engine — Static Security Analyzer</header>
 
-<textarea id="code">
-q = request.args.get("q")
-return "<h1>" + q + "</h1>"
-</textarea>
+<div class="container">
 
-<br>
-<button onclick="runAnalysis()">Analyze Code</button>
+<h3>Analyze Code Snippet</h3>
+<textarea id="code" placeholder="Paste Python code here..."></textarea>
+<button onclick="analyze()">Analyze</button>
 
-<div id="output"></div>
+<hr>
+
+<h3>Upload Python Files (Phone or PC)</h3>
+<input type="file" id="fileInput" multiple accept=".py">
+<button onclick="uploadFiles()">Scan Uploaded Files</button>
+
+<hr>
+
+<h3>Scan GitHub Repository</h3>
+<input type="text" id="githubUrl" placeholder="https://github.com/user/repository">
+<button onclick="scanGithub()">Scan GitHub Repo</button>
+
+<hr>
+
+<h3>Results</h3>
+<div id="output">Waiting for analysis...</div>
+
+</div>
 
 <script>
-async function runAnalysis(){
 
+async function analyze(){
     const code = document.getElementById("code").value;
 
     const res = await fetch("/analyze",{
@@ -84,27 +117,57 @@ async function runAnalysis(){
     });
 
     const data = await res.json();
-
-    const output = document.getElementById("output");
-    output.innerHTML = "";
-
-    if(data.status !== "ok"){
-        output.innerText = "Server Error: " + data.error;
-        return;
-    }
-
-    if(data.issues.length === 0){
-        output.innerHTML = '<div class="safe">✔ No vulnerabilities found</div>';
-        return;
-    }
-
-    data.issues.forEach(issue=>{
-        const div = document.createElement("div");
-        div.className = "issue";
-        div.innerText = issue;
-        output.appendChild(div);
-    });
+    displayResults(data);
 }
+
+async function uploadFiles(){
+    const files = document.getElementById("fileInput").files;
+    const formData = new FormData();
+
+    for(let f of files){
+        formData.append("files",f);
+    }
+
+    const res = await fetch("/upload",{
+        method:"POST",
+        body:formData
+    });
+
+    const data = await res.json();
+    displayResults(data);
+}
+
+async function scanGithub(){
+    const url = document.getElementById("githubUrl").value;
+
+    const res = await fetch("/github",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({url:url})
+    });
+
+    const data = await res.json();
+    displayResults(data);
+}
+
+function displayResults(data){
+    const out = document.getElementById("output");
+
+    if(data.error){
+        out.textContent = "Error: " + data.error;
+        return;
+    }
+
+    if(!data.issues || data.issues.length === 0){
+        out.textContent = "No vulnerabilities detected ✔";
+        return;
+    }
+
+    out.textContent =
+        "Issues Found: " + data.issues.length + "\n\n" +
+        data.issues.join("\n\n--------------------------------\n\n");
+}
+
 </script>
 
 </body>
