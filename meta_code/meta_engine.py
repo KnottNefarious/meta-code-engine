@@ -223,19 +223,20 @@ class AnalysisReport:
 # ---------- engine ----------
 class MetaCodeEngine:
     def orchestrate(self, code):
-        try:
-    tree = ast.parse(code)
-except SyntaxError as e:
-    return AnalysisReport([
-        Finding(
-            "Invalid Python",
-            "INFO",
-            ["parser"],
-            "AST",
-            f"Code cannot be parsed: {e}",
-            "Fix syntax before analysis"
-        )
-    ])
-        analyzer = SymbolicAnalyzer()
-        analyzer.analyze(tree)
-        return AnalysisReport(analyzer.findings)
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as e:
+        return AnalysisReport([
+            Finding(
+                "Invalid Python",
+                "INFO",
+                ["parser"],
+                "AST",
+                f"Code cannot be parsed: {e.msg}",
+                "Fix syntax before analysis"
+            )
+        ])
+
+    analyzer = SymbolicAnalyzer()
+    analyzer.analyze(tree)
+    return AnalysisReport(analyzer.findings)
