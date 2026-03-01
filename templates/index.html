@@ -1,61 +1,125 @@
 <!DOCTYPE html>
 <html>
 <head>
-<title>Meta Code Engine</title>
+<meta charset="UTF-8">
+<title>Meta-Code-Engine</title>
+
 <style>
-body{font-family:monospace;background:#0f172a;color:#e5e7eb;padding:20px}
-textarea{width:100%;height:180px;background:#020617;color:#e5e7eb}
-button{padding:10px;margin-top:10px}
-pre{background:#020617;padding:12px;white-space:pre-wrap}
-.section{margin-bottom:40px;border:1px solid #334155;padding:15px}
+body{
+    background:#020617;
+    color:#e5e7eb;
+    font-family:Arial,Helvetica,sans-serif;
+    margin:40px;
+}
+
+h1{
+    color:#60a5fa;
+}
+
+.panel{
+    background:#0f172a;
+    padding:20px;
+    margin-bottom:25px;
+    border-radius:12px;
+    border:1px solid #1e293b;
+}
+
+textarea{
+    width:100%;
+    height:200px;
+    background:#020617;
+    color:#c7f9cc;
+    border:1px solid #1e293b;
+    border-radius:8px;
+    padding:10px;
+    font-family:monospace;
+}
+
+input[type="text"],input[type="file"]{
+    width:100%;
+    padding:10px;
+    background:#020617;
+    color:white;
+    border:1px solid #1e293b;
+    border-radius:8px;
+    margin-top:8px;
+}
+
+button{
+    margin-top:12px;
+    padding:10px 16px;
+    border:none;
+    background:#2563eb;
+    color:white;
+    border-radius:8px;
+    cursor:pointer;
+}
+
+button:hover{
+    background:#1d4ed8;
+}
+
+.result{
+    margin-top:12px;
+    background:#020617;
+    border:1px solid #1e293b;
+    padding:12px;
+    border-radius:8px;
+    white-space:pre-wrap;
+    min-height:140px;
+    font-family:monospace;
+    color:#facc15;
+}
 </style>
 </head>
 
 <body>
 
-<h1>Meta-Code-Engine</h1>
+<h1>Meta-Code-Engine Static Analyzer</h1>
 
-<div class="section">
+<div class="panel">
 <h2>Analyze Code Snippet</h2>
-<textarea id="code"></textarea><br>
-<button onclick="analyze()">Analyze</button>
-<pre id="result1"></pre>
+<textarea id="code" placeholder="Paste Python code here..."></textarea>
+<button onclick="analyzeCode()">Analyze Snippet</button>
+<div id="snippetResult" class="result"></div>
 </div>
 
-<div class="section">
-<h2>Upload Python Files</h2>
-<input type="file" id="fileInput" multiple accept=".py"><br>
-<button onclick="upload()">Scan Files</button>
-<pre id="result2"></pre>
+<div class="panel">
+<h2>Upload Python File</h2>
+<input type="file" id="fileInput" multiple>
+<button onclick="uploadFile()">Analyze File</button>
+<div id="uploadResult" class="result"></div>
 </div>
 
-<div class="section">
+<div class="panel">
 <h2>Scan GitHub Repository</h2>
-<input type="text" id="repo" placeholder="https://github.com/user/repo"><br>
-<button onclick="github()">Scan Repo</button>
-<pre id="result3"></pre>
+<input type="text" id="repo" placeholder="https://github.com/user/repository">
+<button onclick="scanRepo()">Scan Repository</button>
+<div id="repoResult" class="result"></div>
 </div>
 
 <script>
-async function analyze(){
-const r=await fetch("/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({code:code.value})});
-const j=await r.json();
-result1.textContent=j.result||j.error;
+async function analyzeCode(){
+    const code=document.getElementById("code").value;
+    const r=await fetch("/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({code})});
+    const j=await r.json();
+    document.getElementById("snippetResult").textContent=j.result||j.error;
 }
 
-async function upload(){
-const fd=new FormData();
-for(const f of fileInput.files){fd.append("file",f);}
-const r=await fetch("/upload",{method:"POST",body:fd});
-const j=await r.json();
-result2.textContent=j.result||j.error;
+async function uploadFile(){
+    const files=document.getElementById("fileInput").files;
+    const fd=new FormData();
+    for(const f of files){fd.append("file",f);}
+    const r=await fetch("/upload",{method:"POST",body:fd});
+    const j=await r.json();
+    document.getElementById("uploadResult").textContent=j.result||j.error;
 }
 
-async function github(){
-result3.textContent="Scanning repository...";
-const r=await fetch("/github",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({repo:repo.value})});
-const j=await r.json();
-result3.textContent=j.result||j.error;
+async function scanRepo(){
+    const repo=document.getElementById("repo").value;
+    const r=await fetch("/github",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({repo})});
+    const j=await r.json();
+    document.getElementById("repoResult").textContent=j.result||j.error;
 }
 </script>
 
