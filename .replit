@@ -8,7 +8,8 @@ modules = ["python-3.12"]
 channel = "stable-25_05"
 
 [deployment]
-run = ["python", "app.py"]
+run = ["gunicorn", "--bind=0.0.0.0:5000", "app:app"]
+deploymentTarget = "autoscale"
 
 [[ports]]
 localPort = 5000
@@ -16,3 +17,27 @@ externalPort = 80
 
 [agent]
 expertMode = true
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start application"
+
+[[workflows.workflow]]
+name = "Start application"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python app.py"
+waitForPort = 5000
+
+[workflows.workflow.metadata]
+outputType = "webview"
