@@ -1,6 +1,5 @@
-[![Live Demo](https://img.shields.io/badge/Live-Demo-brightgreen)]([https://20af8bd1-6406-4c04-8c1a-b8012ca55334-00-17nko5zx65rb3.riker.replit.dev/](https://20af8bd1-6406-4c04-8c1a-b8012ca55334-00-17nko5zx65rb3.riker.replit.dev/))
 
-Meta-Code Engine 
+Meta-Code Engine     ""Live Demo" (https://img.shields.io/badge/Live-Demo-brightgreen?style=for-the-badge)" (https://20af8bd1-6406-4c04-8c1a-b8012ca55334-00-17nko5zx65rb3.riker.replit.dev/)
 
 Meta-Code Engine is a static application security analyzer (SAST) for Python web applications.
 
