@@ -100,11 +100,13 @@ def analyze_github():
         owner, repo = parts[0], parts[1]
 
         api_url = f"https://api.github.com/repos/{owner}/{repo}"
-        info = requests.get(api_url, timeout=20)
+        headers = {"User-Agent": "MetaCodeEngine-Scanner"}
+info = requests.get(api_url, headers=headers, timeout=20)
         default_branch = info.json().get("default_branch", "main")
 
         zip_url = f"https://github.com/{owner}/{repo}/archive/refs/heads/{default_branch}.zip"
-r = requests.get(zip_url, timeout=60)
+headers = {"User-Agent": "MetaCodeEngine-Scanner"}
+r = requests.get(zip_url, headers=headers, timeout=60)
 
 if r.status_code != 200:
     return jsonify({"error": "Failed to download repository"}), 400
