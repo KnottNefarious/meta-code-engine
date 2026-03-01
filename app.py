@@ -20,7 +20,7 @@ def index():
 # ---------------- health check ----------------
 @app.get("/health")
 def health():
-    return jsonify({"status": "alive"})
+    return jsonify({"status:Good": "200"})
 
 
 # ---------------- analyze pasted code ----------------
