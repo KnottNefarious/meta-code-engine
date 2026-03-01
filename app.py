@@ -1,117 +1,117 @@
 from flask import Flask, request, jsonify, render_template
-import requests
-import zipfile
-import io
-import os
-
 from meta_code.meta_engine import MetaCodeEngine
+import io
+import zipfile
+import requests
 
 app = Flask(__name__)
+
 engine = MetaCodeEngine()
 
-
-# ---------------- Home Page ----------------
-@app.route("/")
+# ---------------- UI ----------------
+@app.get("/")
 def index():
     return render_template("index.html")
 
 
-# ---------------- Health checks ----------------
-@app.route("/health")
+# ---------------- health check ----------------
+@app.get("/health")
 def health():
     return jsonify({"status": "alive"})
 
-@app.route("/ping")
-def ping():
-    return jsonify({"ping": "pong"})
 
-
-# ---------------- Paste Code ----------------
-@app.route("/analyze", methods=["POST"])
-def analyze():
+# ---------------- analyze pasted code ----------------
+@app.post("/analyze")
+def analyze_code():
     try:
-        code = request.json.get("code", "")
+        data = request.get_json(silent=True)
+
+        if not data or "code" not in data:
+            return jsonify({"error": "No code provided"}), 400
+
+        code = data["code"]
+
         report = engine.orchestrate(code)
-        return jsonify({"issues": report.issues})
+
+        if not report.issues:
+            return jsonify({"result": "No vulnerabilities found."})
+
+        return jsonify({"result": "\n\n".join(report.issues)})
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-# ---------------- Upload File ----------------
-@app.route("/upload", methods=["POST"])
-def upload():
+# ---------------- upload python file ----------------
+@app.post("/upload")
+def upload_file():
     try:
         if "file" not in request.files:
             return jsonify({"error": "No file uploaded"}), 400
 
         file = request.files["file"]
-        code = file.read().decode("utf-8", errors="ignore")
+
+        if not file.filename.endswith(".py"):
+            return jsonify({"error": "Only .py files allowed"}), 400
+
+        code = file.read().decode(errors="ignore")
 
         report = engine.orchestrate(code)
-        return jsonify({"issues": report.issues})
+
+        if not report.issues:
+            return jsonify({"result": "No vulnerabilities found."})
+
+        return jsonify({"result": "\n\n".join(report.issues)})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-# ---------------- Single GitHub File ----------------
-@app.route("/github_file", methods=["POST"])
-def github_file():
+# ---------------- GitHub repo scanner ----------------
+@app.post("/analyze_repo")   # <-- IMPORTANT FIX
+def analyze_github():
     try:
-        url = request.json.get("url")
+        data = request.get_json(silent=True)
 
-        if not url:
-            return jsonify({"error": "Missing URL"}), 400
+        if not data or "repo" not in data:
+            return jsonify({"error": "No repository URL provided"}), 400
 
-        r = requests.get(url, timeout=20)
-        r.raise_for_status()
+        repo_url = data["repo"]
 
-        code = r.text
-        report = engine.orchestrate(code)
+        if not repo_url.startswith("https://github.com/"):
+            return jsonify({"error": "Only GitHub repositories allowed"}), 400
 
-        return jsonify({"issues": report.issues})
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-# ---------------- Entire GitHub Repository ----------------
-@app.route("/github_repo", methods=["POST"])
-def github_repo():
-    try:
-        repo_url = request.json.get("url")
-        if not repo_url:
-            return jsonify({"error": "Missing repo URL"}), 400
-
-        # convert repo URL to zip
         if repo_url.endswith("/"):
             repo_url = repo_url[:-1]
 
         zip_url = repo_url + "/archive/refs/heads/main.zip"
 
-        r = requests.get(zip_url, timeout=60)
-        r.raise_for_status()
+        r = requests.get(zip_url, timeout=30)
 
-        zip_bytes = io.BytesIO(r.content)
-        z = zipfile.ZipFile(zip_bytes)
+        if r.status_code != 200:
+            return jsonify({"error": "Could not download repo (wrong branch or private repo)"}), 400
 
-        all_issues = []
+        z = zipfile.ZipFile(io.BytesIO(r.content))
 
-        for name in z.namelist():
-            if name.endswith(".py"):
-                with z.open(name) as f:
-                    code = f.read().decode("utf-8", errors="ignore")
-                    report = engine.orchestrate(code)
+        findings = []
 
-                    for issue in report.issues:
-                        all_issues.append(f"[{name}]\\n{issue}")
+        for filename in z.namelist():
+            if filename.endswith(".py"):
+                code = z.read(filename).decode(errors="ignore")
+                report = engine.orchestrate(code)
 
-        return jsonify({"issues": all_issues})
+                for issue in report.issues:
+                    findings.append(f"{filename}\n{issue}\n")
+
+        if not findings:
+            return jsonify({"result": "No vulnerabilities found."})
+
+        return jsonify({"result": "\n".join(findings)})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-# ---------------- Run ----------------
+# ---------------- run ----------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
