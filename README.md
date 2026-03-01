@@ -2,9 +2,6 @@
 Meta-Code Engine     Live App
 
 ""Launch Meta-Code-Engine"    !Live App¡
-)
-
-](https://fe7ca09d-a1e7-4c14-bffe-a0c723af82ab-00-151793tzovjnp.kirk.replit.dev/)
 
 Meta-Code Engine is a static application security analyzer (SAST) for Python web applications.
 
