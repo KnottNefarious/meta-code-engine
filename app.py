@@ -104,10 +104,18 @@ def analyze_github():
         default_branch = info.json().get("default_branch", "main")
 
         zip_url = f"https://github.com/{owner}/{repo}/archive/refs/heads/{default_branch}.zip"
-        r = requests.get(zip_url, timeout=60)
+r = requests.get(zip_url, timeout=60)
 
-        if r.status_code != 200:
-            return jsonify({"error": "Failed to download repository"}), 400
+if r.status_code != 200:
+    return jsonify({"error": "Failed to download repository"}), 400
+
+# ---- ADD THESE LINES ----
+if len(r.content) > 8_000_000:
+    return jsonify({"error": "Repository too large to analyze safely"}), 400
+# -------------------------
+
+z = zipfile.ZipFile(io.BytesIO(r.content))
+findings = []
 
         z = zipfile.ZipFile(io.BytesIO(r.content))
         findings = []
