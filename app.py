@@ -1,150 +1,229 @@
-from flask import Flask, request, jsonify, render_template
-from meta_code.meta_engine import MetaCodeEngine
-import io
-import zipfile
-import requests
+import ast
 
-app = Flask(__name__)
-
-# create analyzer
-engine = MetaCodeEngine()
+# ---------- configuration ----------
+SQL_METHODS = {"execute", "executemany"}
+REQUEST_CONTAINERS = {"args", "form", "json", "values", "headers", "cookies", "data"}
+HTML_KEYWORDS = {"<html", "<div", "<script", "<h1", "<body", "<span"}
+SANITIZERS = {"escape"}  # markupsafe.escape
 
 
-# ---------------- UI ----------------
-@app.get("/")
-def index():
-    return render_template("index.html")
+# ---------- exploitability scoring ----------
+def calculate_exploitability(vuln_type):
+    if vuln_type in {"Command Injection", "Unsafe Deserialization"}:
+        return "VERY LIKELY", "direct code execution possible"
+    if vuln_type == "SQL Injection":
+        return "VERY LIKELY", "database can be manipulated directly"
+    if vuln_type == "Cross-Site Scripting (XSS)":
+        return "LIKELY", "attacker can execute JavaScript in victim browser"
+    if vuln_type == "Path Traversal":
+        return "LIKELY", "attacker may read sensitive files"
+    if vuln_type == "Server-Side Request Forgery (SSRF)":
+        return "LIKELY", "attacker controls server network requests"
+    if vuln_type == "Insecure Direct Object Reference (IDOR)":
+        return "VERY LIKELY", "unauthorized data access possible"
+    return "UNKNOWN", "insufficient context"
 
 
-# ---------------- health check ----------------
-@app.get("/health")
-def health():
-    return jsonify({"status": "alive"})
+# ---------- finding ----------
+class Finding:
+    def __init__(self, vuln_type, severity, path, sink, reason, fix, lineno=None):
+        self.vuln_type = vuln_type
+        self.severity = severity
+        self.path = path
+        self.sink = sink
+        self.reason = reason
+        self.fix = fix
+        self.lineno = lineno
+        self.exploitability, self.exploit_reason = calculate_exploitability(vuln_type)
+
+    def format(self):
+        location = f"Location: line {self.lineno}\n" if self.lineno else ""
+        return (
+            f"{self.vuln_type}\n"
+            f"Severity: {self.severity}\n"
+            f"{location}"
+            f"Attack Path: {' → '.join(self.path)}\n"
+            f"Sink: {self.sink}\n"
+            f"Why: {self.reason}\n"
+            f"Fix: {self.fix}"
+        )
 
 
-# ---------------- analyze pasted code ----------------
-@app.post("/analyze")
-def analyze_code():
-    try:
-        data = request.get_json(silent=True)
-        if not data:
-            return jsonify({"error": "No JSON body received"}), 400
+# ---------- symbolic value ----------
+class SymbolicValue:
+    def __init__(self, name, tainted=False, path=None):
+        self.name = name
+        self.tainted = tainted
+        self.path = path or [name]
 
-        code = data.get("code", "")
-        if not code.strip():
-            return jsonify({"result": "No code provided."})
+    def add(self, label):
+        self.path.append(label)
 
-        report = engine.orchestrate(code)
-
-        if not report.issues:
-            return jsonify({"result": "No vulnerabilities found."})
-
-        return jsonify({"result": "\n\n".join(report.issues)})
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    def merge(self, other):
+        merged = SymbolicValue(self.name, self.tainted or other.tainted, list(self.path))
+        merged.path = list(dict.fromkeys(self.path + other.path))
+        return merged
 
 
-# ---------------- upload python files ----------------
-@app.post("/upload")
-def upload_file():
-    try:
-        files = request.files.getlist("file")
-        findings = []
+# ---------- analyzer ----------
+class SymbolicAnalyzer:
+    def __init__(self):
+        self.symbols = {}
+        self.findings = []
+        self._fingerprints = set()
+        self.counter = 0
+        self.functions = {}
 
-        for file in files:
-            if not file or file.filename == "":
-                continue
+    # ---- taint source ----
+    def new_symbol(self):
+        self.counter += 1
+        return SymbolicValue(f"request_{self.counter}", True, ["request"])
 
-            if not file.filename.lower().endswith(".py"):
-                continue
+    # ---- finding (DEDUP FIX) ----
+    def add_finding(self, vuln_type, severity, sym, sink, reason, fix, node=None):
+        lineno = getattr(node, "lineno", None)
+        fingerprint = (vuln_type, lineno, sink)
 
-            # IMPORTANT: reset stream before reading
-            file.stream.seek(0)
-            raw = file.stream.read()
+        if fingerprint in self._fingerprints:
+            return
 
-            if not raw:
-                continue
+        self._fingerprints.add(fingerprint)
+        self.findings.append(
+            Finding(vuln_type, severity, sym.path, sink, reason, fix, lineno)
+        )
 
-            code = raw.decode("utf-8", errors="ignore")
+    # ---- node evaluation ----
+    def eval(self, node):
+        if node is None:
+            return None
 
-            report = engine.orchestrate(code)
+        if isinstance(node, ast.Constant):
+            return node.value
 
-            for issue in report.issues:
-                findings.append(f"{file.filename}\n{issue}\n")
+        if isinstance(node, ast.Name):
+            return self.symbols.get(node.id)
 
-        if not findings:
-            return jsonify({"result": "No vulnerabilities found."})
+        # request.args.get()
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Attribute):
 
-        return jsonify({"result": "\n".join(findings)})
+                # sanitizer detection
+                if node.func.attr in SANITIZERS:
+                    return None
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+                # request.args.get
+                if isinstance(node.func.value, ast.Attribute):
+                    if isinstance(node.func.value.value, ast.Name) and node.func.value.value.id == "request":
+                        sym = self.new_symbol()
+                        sym.add("get")
+                        return sym
+
+                # SQL injection
+                if node.func.attr in SQL_METHODS and node.args:
+                    query = self.eval(node.args[0])
+                    if isinstance(query, SymbolicValue):
+                        self.add_finding(
+                            "SQL Injection",
+                            "HIGH",
+                            query,
+                            "cursor.execute(query)",
+                            "User input concatenated into SQL query",
+                            "Use parameterized queries",
+                            node
+                        )
+
+        # XSS via string concat
+        if isinstance(node, ast.BinOp):
+            left = self.eval(node.left)
+            right = self.eval(node.right)
+
+            def contains_html(v):
+                return isinstance(v, str) and any(tag in v.lower() for tag in HTML_KEYWORDS)
+
+            if (contains_html(left) and isinstance(right, SymbolicValue)) or (
+                contains_html(right) and isinstance(left, SymbolicValue)
+            ):
+                sym = right if isinstance(right, SymbolicValue) else left
+                sym.add("propagation")
+                return sym
+
+            if isinstance(left, SymbolicValue) and isinstance(right, SymbolicValue):
+                return left.merge(right)
+            return left or right
+
+        # open(path) -> path traversal
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "open":
+            arg = self.eval(node.args[0])
+            if isinstance(arg, SymbolicValue):
+                self.add_finding(
+                    "Path Traversal",
+                    "MEDIUM",
+                    arg,
+                    "open(path)",
+                    "User input used as filesystem path",
+                    "Validate filename",
+                    node
+                )
+
+        return None
+
+    # ---- execution ----
+    def execute_block(self, body):
+        for stmt in body:
+
+            # assignment
+            if isinstance(stmt, ast.Assign) and isinstance(stmt.targets[0], ast.Name):
+                val = self.eval(stmt.value)
+                if isinstance(val, SymbolicValue):
+                    val.add(stmt.targets[0].id)
+                self.symbols[stmt.targets[0].id] = val
+
+            # return -> XSS sink
+            elif isinstance(stmt, ast.Return):
+                val = self.eval(stmt.value)
+                if isinstance(val, SymbolicValue):
+                    self.add_finding(
+                        "Cross-Site Scripting (XSS)",
+                        "HIGH",
+                        val,
+                        "HTTP response",
+                        "User input returned directly to browser",
+                        "Escape output or use templating auto-escaping",
+                        stmt
+                    )
+
+            # function defs (inter-procedural tracking)
+            elif isinstance(stmt, ast.FunctionDef):
+                self.functions[stmt.name] = stmt
+
+            # function calls
+            elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
+                call = stmt.value
+                if isinstance(call.func, ast.Name) and call.func.id in self.functions:
+                    func = self.functions[call.func.id]
+                    saved = self.symbols.copy()
+
+                    for arg, param in zip(call.args, func.args.args):
+                        val = self.eval(arg)
+                        self.symbols[param.arg] = val
+
+                    self.execute_block(func.body)
+                    self.symbols = saved
+
+    def analyze(self, tree):
+        self.execute_block(tree.body)
 
 
-# ---------------- GitHub repo scanner ----------------
-@app.post("/github")
-def analyze_github():
-    try:
-        data = request.get_json(silent=True)
-        if not data:
-            return jsonify({"error": "No JSON body received"}), 400
-
-        repo_url = data.get("repo", "").strip()
-        if not repo_url.startswith("https://github.com/"):
-            return jsonify({"error": "Invalid GitHub URL"}), 400
-
-        # parse owner/repo
-        parts = repo_url.replace("https://github.com/", "").split("/")
-        if len(parts) < 2:
-            return jsonify({"error": "Invalid repository format"}), 400
-
-        owner, repo = parts[0], parts[1]
-
-        # detect default branch
-        api_url = f"https://api.github.com/repos/{owner}/{repo}"
-        info = requests.get(api_url, timeout=20)
-        default_branch = info.json().get("default_branch", "main")
-
-        # download zip
-        zip_url = f"https://github.com/{owner}/{repo}/archive/refs/heads/{default_branch}.zip"
-        r = requests.get(zip_url, timeout=60)
-
-        if r.status_code != 200:
-            return jsonify({"error": "Failed to download repository"}), 400
-
-        z = zipfile.ZipFile(io.BytesIO(r.content))
-        findings = []
-
-        for filename in z.namelist():
-
-            if not filename.endswith(".py"):
-                continue
-
-            try:
-                raw = z.open(filename).read()
-                if not raw:
-                    continue
-
-                code = raw.decode("utf-8", errors="ignore")
-
-                report = engine.orchestrate(code)
-
-                for issue in report.issues:
-                    findings.append(f"{filename}\n{issue}\n")
-
-            except Exception:
-                continue
-
-        if not findings:
-            return jsonify({"result": "No vulnerabilities found."})
-
-        return jsonify({"result": "\n".join(findings)})
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+# ---------- report ----------
+class AnalysisReport:
+    def __init__(self, findings):
+        self.issues = [f.format() for f in findings]
 
 
-# ---------------- run ----------------
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+# ---------- engine ----------
+class MetaCodeEngine:
+    def orchestrate(self, code):
+        tree = ast.parse(code)
+        analyzer = SymbolicAnalyzer()
+        analyzer.analyze(tree)
+        return AnalysisReport(analyzer.findings)
