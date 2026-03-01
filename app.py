@@ -20,7 +20,7 @@ def index():
 # ---------------- health check ----------------
 @app.get("/health")
 def health():
-    return jsonify({"status:Good": "200"})
+    return "ok", 200
 
 
 # ---------------- analyze pasted code ----------------
@@ -63,10 +63,12 @@ def upload_file():
             file.stream.seek(0)
             raw = file.stream.read()
 
-if len(raw) > 200_000:
-    return jsonify({"error": "File too large to analyze safely"}), 400
             if not raw:
                 continue
+
+            # file size protection (200 KB per file)
+            if len(raw) > 200_000:
+                return jsonify({"error": "File too large to analyze safely"}), 400
 
             code = raw.decode("utf-8", errors="ignore")
             report = engine.orchestrate(code)
@@ -101,25 +103,22 @@ def analyze_github():
 
         owner, repo = parts[0], parts[1]
 
+        # detect default branch
         api_url = f"https://api.github.com/repos/{owner}/{repo}"
         headers = {"User-Agent": "MetaCodeEngine-Scanner"}
-info = requests.get(api_url, headers=headers, timeout=20)
+        info = requests.get(api_url, headers=headers, timeout=20)
         default_branch = info.json().get("default_branch", "main")
 
+        # download repo zip
         zip_url = f"https://github.com/{owner}/{repo}/archive/refs/heads/{default_branch}.zip"
-headers = {"User-Agent": "MetaCodeEngine-Scanner"}
-r = requests.get(zip_url, headers=headers, timeout=60)
+        r = requests.get(zip_url, headers=headers, timeout=60)
 
-if r.status_code != 200:
-    return jsonify({"error": "Failed to download repository"}), 400
+        if r.status_code != 200:
+            return jsonify({"error": "Failed to download repository"}), 400
 
-# ---- ADD THESE LINES ----
-if len(r.content) > 8_000_000:
-    return jsonify({"error": "Repository too large to analyze safely"}), 400
-# -------------------------
-
-z = zipfile.ZipFile(io.BytesIO(r.content))
-findings = []
+        # repo size protection (8MB)
+        if len(r.content) > 8_000_000:
+            return jsonify({"error": "Repository too large to analyze safely"}), 400
 
         z = zipfile.ZipFile(io.BytesIO(r.content))
         findings = []
