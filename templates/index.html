@@ -1,127 +1,610 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Meta-Code-Engine</title>
-
 <style>
-body{
-    background:#020617;
-    color:#e5e7eb;
-    font-family:Arial,Helvetica,sans-serif;
-    margin:40px;
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    background: #020617;
+    color: #e5e7eb;
+    font-family: Arial, Helvetica, sans-serif;
+    padding: 32px 24px 60px;
+    max-width: 960px;
+    margin: 0 auto;
 }
 
-h1{
-    color:#60a5fa;
+h1 {
+    color: #60a5fa;
+    font-size: 1.9rem;
+    margin-bottom: 6px;
 }
 
-.panel{
-    background:#0f172a;
-    padding:20px;
-    margin-bottom:25px;
-    border-radius:12px;
-    border:1px solid #1e293b;
+.subtitle {
+    color: #64748b;
+    font-size: 0.88rem;
+    margin-bottom: 32px;
+    letter-spacing: 0.03em;
 }
 
-textarea{
-    width:100%;
-    height:200px;
-    background:#020617;
-    color:#c7f9cc;
-    border:1px solid #1e293b;
-    border-radius:8px;
-    padding:10px;
-    font-family:monospace;
+/* ── tab bar ── */
+.tab-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 20px;
 }
 
-input[type="text"],input[type="file"]{
-    width:100%;
-    padding:10px;
-    background:#020617;
-    color:white;
-    border:1px solid #1e293b;
-    border-radius:8px;
-    margin-top:8px;
+.tab-btn {
+    padding: 7px 14px;
+    background: #0f172a;
+    color: #94a3b8;
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.82rem;
+    transition: all 0.15s;
+}
+.tab-btn:hover  { background: #1e293b; color: #e5e7eb; }
+.tab-btn.active { background: #1d4ed8; color: #fff; border-color: #2563eb; }
+
+/* ── panels ── */
+.panel {
+    display: none;
+    background: #0f172a;
+    padding: 22px;
+    border-radius: 14px;
+    border: 1px solid #1e293b;
+    margin-bottom: 20px;
+}
+.panel.active { display: block; }
+
+.panel h2 {
+    color: #60a5fa;
+    font-size: 1.05rem;
+    margin-bottom: 4px;
+}
+.panel .panel-desc {
+    color: #64748b;
+    font-size: 0.8rem;
+    margin-bottom: 14px;
 }
 
-button{
-    margin-top:12px;
-    padding:10px 16px;
-    border:none;
-    background:#2563eb;
-    color:white;
-    border-radius:8px;
-    cursor:pointer;
+/* ── inputs ── */
+textarea {
+    width: 100%;
+    height: 190px;
+    background: #020617;
+    color: #c7f9cc;
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    padding: 12px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.85rem;
+    resize: vertical;
 }
 
-button:hover{
-    background:#1d4ed8;
+input[type="text"],
+input[type="file"] {
+    width: 100%;
+    padding: 10px;
+    background: #020617;
+    color: #e5e7eb;
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    margin-top: 8px;
+    font-size: 0.88rem;
 }
 
-.result{
-    margin-top:12px;
-    background:#020617;
-    border:1px solid #1e293b;
-    padding:12px;
-    border-radius:8px;
-    white-space:pre-wrap;
-    min-height:140px;
-    font-family:monospace;
-    color:#facc15;
+.row { display: flex; gap: 12px; margin-bottom: 12px; }
+.row textarea { flex: 1; }
+
+label {
+    display: block;
+    color: #94a3b8;
+    font-size: 0.78rem;
+    margin-bottom: 4px;
+    margin-top: 12px;
+}
+
+/* ── buttons ── */
+button.run-btn {
+    margin-top: 12px;
+    padding: 10px 20px;
+    border: none;
+    background: #2563eb;
+    color: #fff;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.88rem;
+    transition: background 0.15s;
+}
+button.run-btn:hover  { background: #1d4ed8; }
+button.run-btn:active { background: #1e40af; }
+
+/* ── result boxes ── */
+.result {
+    margin-top: 14px;
+    background: #020617;
+    border: 1px solid #1e293b;
+    border-radius: 10px;
+    padding: 14px;
+    min-height: 120px;
+    white-space: pre-wrap;
+    font-family: 'Courier New', monospace;
+    font-size: 0.82rem;
+    color: #facc15;
+    line-height: 1.6;
+}
+.result.success { color: #4ade80; }
+.result.info    { color: #818cf8; }
+.result.neutral { color: #94a3b8; }
+
+/* ── badges ── */
+.badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 99px;
+    font-size: 0.72rem;
+    font-weight: bold;
+    margin-left: 8px;
+    vertical-align: middle;
+}
+.badge-red   { background: #7f1d1d; color: #fca5a5; }
+.badge-green { background: #14532d; color: #86efac; }
+
+/* ── trace table (monitor) ── */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+    font-size: 0.78rem;
+    font-family: 'Courier New', monospace;
+}
+th {
+    background: #1e293b;
+    color: #94a3b8;
+    padding: 6px 10px;
+    text-align: left;
+}
+td {
+    border-bottom: 1px solid #1e293b;
+    padding: 6px 10px;
+    color: #c7f9cc;
+    vertical-align: top;
+}
+td.err { color: #f87171; }
+
+/* ── stat grid (compress) ── */
+.stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 10px;
+    margin-top: 14px;
+}
+.stat-card {
+    background: #0f172a;
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    padding: 12px;
+    text-align: center;
+}
+.stat-card .val {
+    font-size: 1.5rem;
+    font-weight: bold;
+    color: #60a5fa;
+}
+.stat-card .lbl {
+    font-size: 0.72rem;
+    color: #64748b;
+    margin-top: 4px;
+}
+
+/* spinner */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border: 2px solid #1e293b;
+    border-top-color: #60a5fa;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    vertical-align: middle;
+    margin-right: 6px;
 }
 </style>
 </head>
-
 <body>
 
-<h1>Meta-Code-Engine Static Analyzer</h1>
+<h1>Meta-Code-Engine</h1>
+<p class="subtitle">Static Application Security Testing · Semantic Analysis · Safe Execution · Pattern Intelligence</p>
 
-<div class="panel">
-<h2>Analyze Code Snippet</h2>
-<textarea id="code" placeholder="Paste Python code here..."></textarea>
-<button onclick="analyzeCode()">Analyze Snippet</button>
-<div id="snippetResult" class="result"></div>
+<!-- Tab bar -->
+<div class="tab-bar">
+    <button class="tab-btn active"  onclick="switchTab('sast')">🔐 Security Scan</button>
+    <button class="tab-btn"         onclick="switchTab('upload')">📂 Upload Files</button>
+    <button class="tab-btn"         onclick="switchTab('github')">🐙 GitHub Scan</button>
+    <button class="tab-btn"         onclick="switchTab('execute')">▶ Execute</button>
+    <button class="tab-btn"         onclick="switchTab('monitor')">🔬 Monitor</button>
+    <button class="tab-btn"         onclick="switchTab('dissonance')">🧠 Dissonance</button>
+    <button class="tab-btn"         onclick="switchTab('compress')">📊 Complexity</button>
+    <button class="tab-btn"         onclick="switchTab('compare')">⚖ Compare</button>
+    <button class="tab-btn"         onclick="switchTab('resolve')">🔧 Resolve</button>
 </div>
 
-<div class="panel">
-<h2>Upload Python File</h2>
-<input type="file" id="fileInput" multiple>
-<button onclick="uploadFile()">Analyze File</button>
-<div id="uploadResult" class="result"></div>
+<!-- ═══════════════════════════════════════════════════════ SAST -->
+<div id="panel-sast" class="panel active">
+    <h2>Security Analysis <span id="sast-badge"></span></h2>
+    <p class="panel-desc">Paste Python code to detect vulnerabilities via taint-flow analysis. Tracks attacker-controlled data from request sources to dangerous sinks.</p>
+    <label>Python source code</label>
+    <textarea id="sast-code" placeholder="# Paste Python / Flask code here...
+from flask import request
+uid = request.args.get('id')
+cursor.execute('SELECT * FROM users WHERE id=' + uid)"></textarea>
+    <button class="run-btn" onclick="runSAST()">Analyze for Vulnerabilities</button>
+    <div id="sast-result" class="result neutral">Results will appear here…</div>
 </div>
 
-<div class="panel">
-<h2>Scan GitHub Repository</h2>
-<input type="text" id="repo" placeholder="https://github.com/user/repository">
-<button onclick="scanRepo()">Scan Repository</button>
-<div id="repoResult" class="result"></div>
+<!-- ═══════════════════════════════════════════════════════ UPLOAD -->
+<div id="panel-upload" class="panel">
+    <h2>Upload Python Files <span id="upload-badge"></span></h2>
+    <p class="panel-desc">Upload one or more .py files. Each is scanned for security vulnerabilities independently.</p>
+    <label>Select .py files (multiple allowed)</label>
+    <input type="file" id="upload-input" multiple accept=".py">
+    <button class="run-btn" onclick="runUpload()">Scan Files</button>
+    <div id="upload-result" class="result neutral">Results will appear here…</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ GITHUB -->
+<div id="panel-github" class="panel">
+    <h2>GitHub Repository Scan <span id="github-badge"></span></h2>
+    <p class="panel-desc">Enter a GitHub repository URL. All .py files in the default branch will be downloaded and scanned.</p>
+    <label>Repository URL</label>
+    <input type="text" id="github-url" placeholder="https://github.com/user/repository">
+    <button class="run-btn" onclick="runGitHub()">Scan Repository</button>
+    <div id="github-result" class="result neutral">Results will appear here…</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ EXECUTE -->
+<div id="panel-execute" class="panel">
+    <h2>Safe Code Executor</h2>
+    <p class="panel-desc">Run Python code in a restricted sandbox. Imports, file access, exec/eval, and other dangerous operations are blocked.</p>
+    <label>Python code to execute</label>
+    <textarea id="exec-code" placeholder="# Safe builtins only: print, len, range, sum, min, max, sorted, …
+nums = [3, 1, 4, 1, 5, 9, 2, 6]
+print(sorted(nums))
+print('Sum:', sum(nums))"></textarea>
+    <button class="run-btn" onclick="runExecute()">Execute</button>
+    <div id="exec-result" class="result neutral">Output will appear here…</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ MONITOR -->
+<div id="panel-monitor" class="panel">
+    <h2>Execution Monitor</h2>
+    <p class="panel-desc">Step-by-step execution trace. Shows variable state after every statement in the sandboxed environment.</p>
+    <label>Python code to trace</label>
+    <textarea id="mon-code" placeholder="x = 10
+y = x * 2
+z = x + y
+print(z)"></textarea>
+    <button class="run-btn" onclick="runMonitor()">Trace Execution</button>
+    <div id="mon-result" class="result neutral">Trace will appear here…</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ DISSONANCE -->
+<div id="panel-dissonance" class="panel">
+    <h2>Dissonance Detector <span id="dis-badge"></span></h2>
+    <p class="panel-desc">Semantic code-quality analysis. Detects unused variables, unreachable code, dead code after return, empty except blocks, tautological comparisons, and mutable default arguments.</p>
+    <label>Python source code</label>
+    <textarea id="dis-code" placeholder="def process(data, items=[]):
+    x = 10
+    y = 20
+    if False:
+        print('never')
+    items.append(data)
+    return items
+    z = 999  # dead code"></textarea>
+    <button class="run-btn" onclick="runDissonance()">Detect Issues</button>
+    <div id="dis-result" class="result neutral">Issues will appear here…</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ COMPRESS -->
+<div id="panel-compress" class="panel">
+    <h2>Pattern & Complexity Analysis</h2>
+    <p class="panel-desc">Extracts structural patterns (loops, branches, functions, etc.) and estimates Kolmogorov complexity via compressed AST size ratio.</p>
+    <label>Python source code</label>
+    <textarea id="cmp-code" placeholder="import os
+
+class FileProcessor:
+    def __init__(self, path):
+        self.path = path
+
+    def process(self):
+        try:
+            for line in open(self.path):
+                if line.strip():
+                    print(line)
+        except Exception as e:
+            print(e)"></textarea>
+    <button class="run-btn" onclick="runCompress()">Analyze Patterns</button>
+    <div id="cmp-grid" class="stat-grid" style="display:none"></div>
+    <div id="cmp-result" class="result neutral" style="margin-top:12px">Results will appear here…</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ COMPARE -->
+<div id="panel-compare" class="panel">
+    <h2>Structural Comparison</h2>
+    <p class="panel-desc">Compare two Python programs by AST structure. Shows shared patterns, divergences, and a structural similarity score.</p>
+    <div class="row">
+        <div style="flex:1">
+            <label>Program A</label>
+            <textarea id="cmp-a" placeholder="def greet(name):
+    if name:
+        print('Hello ' + name)
+    else:
+        print('Hello World')"></textarea>
+        </div>
+        <div style="flex:1">
+            <label>Program B</label>
+            <textarea id="cmp-b" placeholder="def farewell(user):
+    if user:
+        print('Goodbye ' + user)
+    else:
+        print('Goodbye World')"></textarea>
+        </div>
+    </div>
+    <button class="run-btn" onclick="runCompare()">Compare Programs</button>
+    <div id="cmp-res" class="result neutral">Comparison will appear here…</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ RESOLVE -->
+<div id="panel-resolve" class="panel">
+    <h2>Resolution Predictor</h2>
+    <p class="panel-desc">Paste issues from the Dissonance Detector (one per line) and get suggested fixes. Tracks convergence across repeated issue patterns.</p>
+    <label>Issues (one per line)</label>
+    <textarea id="res-issues" placeholder="Unused variable: 'x' is assigned but never read.
+Unreachable code detected in if statement.
+Empty bare except block detected — errors are silently swallowed."></textarea>
+    <button class="run-btn" onclick="runResolve()">Predict Resolutions</button>
+    <div id="res-result" class="result neutral">Predictions will appear here…</div>
 </div>
 
 <script>
-async function analyzeCode(){
-    const code=document.getElementById("code").value;
-    const r=await fetch("/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({code})});
-    const j=await r.json();
-    document.getElementById("snippetResult").textContent=j.result||j.error;
+// ── Tab switching ──────────────────────────────────────────────────────────
+function switchTab(name) {
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('panel-' + name).classList.add('active');
+    event.target.classList.add('active');
 }
 
-async function uploadFile(){
-    const files=document.getElementById("fileInput").files;
-    const fd=new FormData();
-    for(const f of files){fd.append("file",f);}
-    const r=await fetch("/upload",{method:"POST",body:fd});
-    const j=await r.json();
-    document.getElementById("uploadResult").textContent=j.result||j.error;
+// ── Shared helpers ─────────────────────────────────────────────────────────
+function loading(el) {
+    el.className = 'result neutral';
+    el.innerHTML = '<span class="spin"></span>Analyzing…';
 }
 
-async function scanRepo(){
-    const repo=document.getElementById("repo").value;
-    const r=await fetch("/github",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({repo})});
-    const j=await r.json();
-    document.getElementById("repoResult").textContent=j.result||j.error;
+function setBadge(id, count, label) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (count > 0) {
+        el.innerHTML = `<span class="badge badge-red">${count} ${label}</span>`;
+    } else {
+        el.innerHTML = `<span class="badge badge-green">✔ clean</span>`;
+    }
+}
+
+async function post(url, body) {
+    const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+    return r.json();
+}
+
+// ── SAST ───────────────────────────────────────────────────────────────────
+async function runSAST() {
+    const el = document.getElementById('sast-result');
+    loading(el);
+    const code = document.getElementById('sast-code').value;
+    const j = await post('/analyze', { code });
+    if (j.error) {
+        el.className = 'result'; el.textContent = '⚠ ' + j.error; return;
+    }
+    setBadge('sast-badge', j.issue_count || 0, 'vulns');
+    el.className = j.issue_count > 0 ? 'result' : 'result success';
+    el.textContent = j.result;
+}
+
+// ── Upload ─────────────────────────────────────────────────────────────────
+async function runUpload() {
+    const el = document.getElementById('upload-result');
+    loading(el);
+    const files = document.getElementById('upload-input').files;
+    const fd = new FormData();
+    for (const f of files) fd.append('file', f);
+    const r = await fetch('/upload', { method: 'POST', body: fd });
+    const j = await r.json();
+    if (j.error) { el.className = 'result'; el.textContent = '⚠ ' + j.error; return; }
+    setBadge('upload-badge', j.issue_count || 0, 'vulns');
+    el.className = j.issue_count > 0 ? 'result' : 'result success';
+    el.textContent = j.result;
+}
+
+// ── GitHub ─────────────────────────────────────────────────────────────────
+async function runGitHub() {
+    const el = document.getElementById('github-result');
+    loading(el);
+    const repo = document.getElementById('github-url').value;
+    const j = await post('/github', { repo });
+    if (j.error) { el.className = 'result'; el.textContent = '⚠ ' + j.error; return; }
+    setBadge('github-badge', j.issue_count || 0, 'vulns');
+    el.className = j.issue_count > 0 ? 'result' : 'result success';
+    el.textContent = j.result;
+}
+
+// ── Execute ────────────────────────────────────────────────────────────────
+async function runExecute() {
+    const el = document.getElementById('exec-result');
+    loading(el);
+    const code = document.getElementById('exec-code').value;
+    const j = await post('/execute', { code });
+    if (j.error) { el.className = 'result'; el.textContent = '⚠ ' + j.error; return; }
+
+    if (!j.success) {
+        el.className = 'result';
+        el.textContent = '✘ Execution blocked or failed:\n' + (j.errors || []).join('\n');
+        return;
+    }
+
+    let out = '';
+    if (j.output) out += '── Output ──\n' + j.output;
+    if (j.variables && Object.keys(j.variables).length) {
+        out += '\n── Variables ──\n';
+        for (const [k, v] of Object.entries(j.variables)) {
+            out += `  ${k} = ${v}\n`;
+        }
+    }
+    el.className = 'result success';
+    el.textContent = out.trim() || '(no output)';
+}
+
+// ── Monitor ────────────────────────────────────────────────────────────────
+async function runMonitor() {
+    const el = document.getElementById('mon-result');
+    loading(el);
+    const code = document.getElementById('mon-code').value;
+    const j = await post('/monitor', { code });
+    if (j.error) { el.className = 'result'; el.textContent = '⚠ ' + j.error; return; }
+    if (j.errors && j.errors.length) {
+        el.className = 'result';
+        el.innerHTML = '✘ ' + escHtml(j.errors.join('\n'));
+        return;
+    }
+
+    // Build trace table
+    let html = `<table>
+<tr><th>#</th><th>Statement</th><th>Node Type</th><th>Variables After</th><th>Error</th></tr>`;
+    (j.steps || []).forEach((s, i) => {
+        const vars = s.variables_after
+            ? Object.entries(s.variables_after).map(([k,v]) => `${k}=${v}`).join(', ')
+            : '';
+        const errCell = s.error
+            ? `<td class="err">${escHtml(s.error)}</td>`
+            : `<td>—</td>`;
+        html += `<tr>
+<td>${i+1}</td>
+<td>${escHtml(s.statement || '')}</td>
+<td>${escHtml(s.node_type || '')}</td>
+<td>${escHtml(vars)}</td>
+${errCell}
+</tr>`;
+    });
+    html += '</table>';
+    if (j.output) html += `\n<div style="margin-top:10px;color:#4ade80">── Output ──\n${escHtml(j.output)}</div>`;
+
+    el.className = 'result success';
+    el.innerHTML = html;
+}
+
+// ── Dissonance ─────────────────────────────────────────────────────────────
+async function runDissonance() {
+    const el = document.getElementById('dis-result');
+    loading(el);
+    const code = document.getElementById('dis-code').value;
+    const j = await post('/dissonance', { code });
+    if (j.error) { el.className = 'result'; el.textContent = '⚠ ' + j.error; return; }
+    setBadge('dis-badge', j.issue_count || 0, 'issues');
+    el.className = j.issue_count > 0 ? 'result' : 'result success';
+    el.textContent = j.result;
+}
+
+// ── Compress ───────────────────────────────────────────────────────────────
+async function runCompress() {
+    const el   = document.getElementById('cmp-result');
+    const grid = document.getElementById('cmp-grid');
+    loading(el);
+    grid.style.display = 'none';
+    const code = document.getElementById('cmp-code').value;
+    const j = await post('/compress', { code });
+    if (j.error) { el.className = 'result'; el.textContent = '⚠ ' + j.error; return; }
+
+    // Stat cards
+    const c = j.complexity || {};
+    const p = j.patterns || {};
+    const ratio = c.ratio !== undefined ? (c.ratio * 100).toFixed(1) + '%' : '—';
+    const patternItems = Object.entries(p)
+        .filter(([,v]) => v > 0)
+        .map(([k,v]) => `<div class="stat-card"><div class="val">${v}</div><div class="lbl">${k.replace(/_/g,' ')}</div></div>`)
+        .join('');
+
+    grid.innerHTML = `
+        <div class="stat-card"><div class="val">${c.raw_size || 0}</div><div class="lbl">AST bytes</div></div>
+        <div class="stat-card"><div class="val">${c.compressed_size || 0}</div><div class="lbl">compressed bytes</div></div>
+        <div class="stat-card"><div class="val">${ratio}</div><div class="lbl">complexity ratio</div></div>
+        ${patternItems}
+    `;
+    grid.style.display = 'grid';
+
+    el.className = 'result info';
+    el.textContent = JSON.stringify(j, null, 2);
+}
+
+// ── Compare ────────────────────────────────────────────────────────────────
+async function runCompare() {
+    const el = document.getElementById('cmp-res');
+    loading(el);
+    const code1 = document.getElementById('cmp-a').value;
+    const code2 = document.getElementById('cmp-b').value;
+    const j = await post('/compare', { code1, code2 });
+    if (j.error) { el.className = 'result'; el.textContent = '⚠ ' + j.error; return; }
+
+    const t = j.transpositions || {};
+    const score = t.similarity_score !== undefined
+        ? (t.similarity_score * 100).toFixed(1) + '%'
+        : '—';
+
+    let out = `Similarity Score: ${score}\n`;
+    out += `Shared Node Types (${(t.shared_node_types||[]).length}): ${(t.shared_node_types||[]).join(', ')}\n`;
+    if ((t.only_in_program1||[]).length) out += `Only in A: ${t.only_in_program1.join(', ')}\n`;
+    if ((t.only_in_program2||[]).length) out += `Only in B: ${t.only_in_program2.join(', ')}\n`;
+    out += `\nStructure A — depth: ${(j.structure_a||{}).depth}, nodes: ${(j.structure_a||{}).total_nodes}, branching: ${((j.structure_a||{}).branching_factor||0).toFixed(3)}`;
+    out += `\nStructure B — depth: ${(j.structure_b||{}).depth}, nodes: ${(j.structure_b||{}).total_nodes}, branching: ${((j.structure_b||{}).branching_factor||0).toFixed(3)}`;
+
+    el.className = 'result info';
+    el.textContent = out;
+}
+
+// ── Resolve ────────────────────────────────────────────────────────────────
+async function runResolve() {
+    const el = document.getElementById('res-result');
+    loading(el);
+    const raw    = document.getElementById('res-issues').value;
+    const issues = raw.split('\n').map(s => s.trim()).filter(Boolean);
+    const j = await post('/resolve', { issues });
+    if (j.error) { el.className = 'result'; el.textContent = '⚠ ' + j.error; return; }
+
+    let out = '';
+    (j.predictions || []).forEach((p, i) => {
+        const conv = p.convergence ? ' [recurring ⚠]' : '';
+        out += `${i+1}. ${p.issue}\n   → ${p.suggestion}${conv}\n\n`;
+    });
+
+    el.className = 'result info';
+    el.textContent = out.trim() || '(no predictions)';
+}
+
+// ── Utility ────────────────────────────────────────────────────────────────
+function escHtml(s) {
+    return String(s)
+        .replace(/&/g,'&amp;')
+        .replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;');
 }
 </script>
-
 </body>
 </html>
