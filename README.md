@@ -11,7 +11,9 @@ It analyzes Python source code without running it and determines whether attacke
 
 Instead of simple pattern matching, the engine performs taint flow + control-flow analysis and reconstructs real attack paths through the program.
 
----[![Launch Meta-Code-Engine](assets/ezgif.com-animated-gif-maker.gif)](https://20af8bd1-6406-4c04-8c1a-b8012ca55334-00-17nko5zx65rb3.riker.replit.dev/)
+---
+
+[![Launch Meta-Code-Engine](assets/ezgif.com-animated-gif-maker.gif)](https://20af8bd1-6406-4c04-8c1a-b8012ca55334-00-17nko5zx65rb3.riker.replit.dev/)
 
 What It Does 🐍...
 
