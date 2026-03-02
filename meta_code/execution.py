@@ -153,4 +153,3 @@ class ExecutionMonitor:
         except Exception as exc:
             trace['errors'].append(str(exc))
         return trace
-
