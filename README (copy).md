@@ -1,4 +1,4 @@
-[![Live Demo](https://img.shields.io/badge/Live-Demo-brightgreen)](meta-code-engine--KnottNefarious.replit.app)
+[![Live Demo](https://img.shields.io/badge/Live-Demo-brightgreen)](https://a4c29939-30b5-4781-a821-3fa22ad8393d-00-1tg0ttwlolf5b.worf.replit.dev/)
 
 Meta-Code Engine 
 
