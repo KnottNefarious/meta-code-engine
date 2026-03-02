@@ -155,6 +155,18 @@ Example Use Cases
 
 ---
 
+Try It In 60 Seconds
+
+git clone https://github.com/KnottNefarious/meta-code-engine.git
+cd meta-code-engine
+pip install -r requirements.txt
+python app.py
+
+Open http://127.0.0.1:5000 and paste any Python file.
+
+No code is executed. The program is only analyzed.
+
+---
 Installation
 
 git clone https://github.com/KnottNefarious/meta-code-engine.git
