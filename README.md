@@ -14,6 +14,41 @@ Meta-Code Engine is an experimental program analysis tool that examines Python s
 
 Instead of only checking style or syntax like a linter, Meta-Code Engine attempts to interpret the logic and intent of a program.
 
+Quick Example
+
+Paste Python code:
+
+def process(data):
+    result = 0
+    for item in data:
+        if item > 10:
+            result += item
+    return result
+
+Meta-Code Engine returns a reasoning summary:
+
+Detected Behavior
+
+- Iteration over a collection
+- Conditional filtering
+- Accumulator pattern
+
+Logical Interpretation
+
+«The function scans a dataset and sums only values greater than 10.»
+
+Complexity
+
+- Time: O(n)
+- Linear pass through input
+
+Risk Notes
+
+- Fails if "data" is empty or non-iterable
+- Assumes comparable values
+
+You are not reading code anymore — you are reading an explanation.
+
 It answers questions such as:
 
 • What structures does this program use?
