@@ -76,4 +76,3 @@ class StructuralAnalyzer:
             'node_type_distribution': dict(node_types),
             'structural_signature': signature,
         }
-
