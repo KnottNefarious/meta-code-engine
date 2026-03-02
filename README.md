@@ -2,199 +2,192 @@
 Meta-Code Engine   
 
 
-  Live App
+ 👉  Live App
  [![Live Demo](https://img.shields.io/badge/Live-Demo-brightgreen)](https://a4c29939-30b5-4781-a821-3fa22ad8393d-00-1tg0ttwlolf5b.worf.replit.dev/)
 
 ""Launch Meta-Code-Engine"    !Live App¡
 
-Meta-Code Engine is a static application security analyzer (SAST) for Python web applications.
+static application security analyzer (SAST) for Python web applications.
+Meta-Code Engine
 
-It analyzes Python source code without running it and determines whether attacker-controlled input can reach dangerous operations such as OS commands, databases, file access, network requests, or browser output.
+Meta-Code Engine is an experimental program analysis tool that examines Python source code and produces a structured reasoning report describing how the code behaves.
 
-Instead of simple pattern matching, the engine performs taint flow + control-flow analysis and reconstructs real attack paths through the program.
+Instead of only checking style or syntax like a linter, Meta-Code Engine attempts to interpret the logic and intent of a program.
 
----
+It answers questions such as:
 
-What It Does 🐍...
+• What structures does this program use?
+• What patterns appear in the logic?
+• How complex is the execution flow?
+• Where are potential logical risks?
+• What is the code trying to do?
 
-The analyzer models a real attacker interacting with a Flask-style web app:
-
-HTTP Request → Program Logic → Sensitive Operation
-
-It tracks untrusted data from web request sources and determines whether it can influence a security-critical action.
-
-The engine also understands defensive code (authorization checks), allowing it to avoid many false positives.
-
-What most beginner analyzers do:
-pattern matching
-
-what mine does:
-data flow tracking (taint analysis)
-+ semantic authorization reasoning
-(IDOR + Missing Authorization) is the unusual part — many simple open-source scanners don’t even attempt that.
----
- 
-Detected Vulnerabilities 👌
-
-Currently the engine detects:
-
-Remote Code & System
-
-- Command Injection (subprocess / shell=True)
-- Unsafe Deserialization (pickle / yaml loads)
-
-Database
-
-- SQL Injection
-
-Filesystem
-
-- Path Traversal / Arbitrary File Read
-
-Web Application Logic
-
-- Insecure Direct Object Reference (IDOR)
-- Missing authorization checks
-
-Network
-
-- Server-Side Request Forgery (SSRF)
-
-Web Browser
-
-- Cross-Site Scripting (XSS)
-- Open Redirect
-
-Each finding includes:
-
-- Severity
-- Exploitability likelihood
-- Attack path reconstruction
-- Explanation
-- Suggested fix
-
----
-Three working layers:
-
-   1.Source detection
-   •Flask request taint source
-
-   2.Propagation engine
-   •Variable assignment tracking
-   •Branch awareness
-
-   3.Sink reasoning
-   •HTML response detection
-   •SQL query detection
-   •File system detection
-
-Together form the classic model:
-   •Source → Flow → Sink
-     
-That model is exactly how professional SAST tools are designed.
-
-Capability:
-
-Taint sources.       ✔
-Propagation.         ✔
-Sanitizers.          ✔
-Overwrite detection  ✔
-Re-taint detection   ✔
-Sink analysis        ✔
----
-
-Example Output 📝
-
-Command Injection
-Severity: CRITICAL
-Exploitability: VERY LIKELY
-Attack Path: request → get → cmd
-Sink: subprocess(shell=True)
-Why: User input executed by OS shell
-Fix: Avoid shell=True and pass arguments as a list
+The goal is not to run the code — but to understand it.
 
 ---
 
-Key Features 📊
+What It Is
 
-- Static analysis (no code execution required)
-- Path-sensitive taint tracking
-- Control-flow aware (understands if-statements and authorization)
-- Attack path reconstruction
-- Exploitability scoring
-- Web interface (Flask)
-- Mobile friendly UI
+Meta-Code Engine is a static analysis and reasoning system built on top of Python's Abstract Syntax Tree (AST).
+It parses source code and converts it into a semantic analysis report that a human can read.
 
----
+The system sits between a linter and a debugger:
 
-Supported Input Sources (Flask)
+Tool| What it checks
+Linter| Style problems
+Debugger| Runtime state
+Meta-Code Engine| Program behavior and structure
 
-The analyzer treats the following as attacker-controlled:
-
-- "request.args"
-- "request.form"
-- "request.json"
-- "request.headers"
-- "request.cookies"
-- "request.data"
+The engine does not execute your code.
+It studies the logic of the program itself.
 
 ---
 
-How It Works (Technical) 🧠
+Why This Exists
 
-1. Python code is parsed into an Abstract Syntax Tree (AST)
-2. A symbolic execution engine walks the program
-3. Tainted values are tracked across variables and function calls
-4. When tainted data reaches a security sink, a vulnerability is reported
-5. Authorization checks are detected and suppress false positives
+Reading unfamiliar code is one of the hardest tasks in programming.
 
-This makes the tool closer to a security code reviewer than a linter.
+Developers often need to understand:
+• legacy code
+• open-source projects
+• large scripts
+• AI-generated code
+• partially broken programs
+
+Meta-Code Engine helps by producing an explanation layer over source code.
+
+Think of it as:
+
+«A translator between human reasoning and program structure.»
 
 ---
 
-Running Locally
+Features
 
-Clone the repository: 🤯
+Structural Analysis
+
+Identifies functions, loops, branches, and control flow structures.
+
+Complexity Insights
+
+Estimates logical complexity and nesting depth.
+
+Pattern Detection
+
+Recognizes recurring programming constructs and common design patterns.
+
+Risk Reporting
+
+Highlights areas that may lead to logical errors or fragile behavior.
+
+Human-Readable Reports
+
+Returns structured findings instead of raw parser output.
+
+---
+
+How It Works
+
+1. The browser UI sends Python code to the backend.
+2. A Flask API receives the code.
+3. The MetaCodeEngine parses the code using Python's "ast" module.
+4. The engine analyzes the syntax tree.
+5. A structured "AnalysisReport" is generated.
+6. Results are returned as JSON and displayed in the interface.
+
+Pipeline:
+
+Browser → Flask API → MetaCodeEngine → AnalysisReport → JSON → UI
+
+---
+
+Example Use Cases
+
+• Understanding unfamiliar GitHub projects
+• Reviewing AI-generated code (ChatGPT, Copilot, etc.)
+• Teaching programming concepts
+• Inspecting legacy software
+• Early logical auditing before execution
+• Code comprehension assistance
+
+---
+
+Installation
 
 git clone https://github.com/KnottNefarious/meta-code-engine.git
 cd meta-code-engine
-
-Install dependencies:
-
 pip install -r requirements.txt
-
-Run the server:
-
 python app.py
 
-Open:
+Then open:
 
-http://localhost:5000
-
----
-
-Project Structure
-
-app.py                → Flask interface
-meta_code/meta_engine.py → security analysis engine
-templates/index.html  → web UI
-tests/                → example test cases
+http://127.0.0.1:5000
 
 ---
 
-Why This Tool Exists
+Example
 
-Most linters check syntax.
+Input:
 
-Meta-Code Engine checks security behavior.
+def find_max(numbers):
+    max_value = numbers[0]
+    for n in numbers:
+        if n > max_value:
+            max_value = n
+    return max_value
 
-It answers the question:
+Meta-Code Engine will identify:
+• iteration over a collection
+• conditional state update
+• accumulator pattern
+• linear complexity
 
-«“If an attacker sends a request to this program, 
-what can they make it do?”» 🤷‍♂️
+---
+
+Current Limitations
+
+Meta-Code Engine currently:
+• requires syntactically valid Python
+• does not execute code
+• does not perform symbolic execution (yet)
+• focuses on structural reasoning rather than formal verification
+
+This project is experimental and evolving.
+
+---
+
+Future Direction
+
+Planned research directions include:
+• symbolic reasoning about variables
+• detecting unreachable branches
+• termination prediction
+• deeper behavioral inference
+
+The long-term vision is a system that can reason about programs rather than merely run them.
+
+---
+
+Philosophy
+
+Programs are not only instructions for computers.
+They are expressions of human logic.
+
+Meta-Code Engine explores whether software can be analyzed as meaning, not only as execution.
+
+---
+
+Contributing
+
+Contributions, issues, and experiments are welcome.
+
+This project is open to:
+• researchers
+• hobbyists
+• programmers interested in program understanding
 
 ---
 
 License
 
-MIT
+MIT License
