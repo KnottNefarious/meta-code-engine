@@ -92,4 +92,3 @@ class KolmogorovComplexity:
             'compressed_size': compressed_size,
             'ratio': ratio,
         }
-
