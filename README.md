@@ -2,11 +2,16 @@
 Meta-Code Engine   
 
 
- 👉  Live App
+ 👉  Live App will be available if i get more stars ⭐⭐⭐⭐⭐
  [![Live Demo](https://img.shields.io/badge/Live-Demo-brightgreen)](https://a4c29939-30b5-4781-a821-3fa22ad8393d-00-1tg0ttwlolf5b.worf.replit.dev/)
 
 ""Launch Meta-Code-Engine"    !Live App¡
+Screenshot
 
+"Meta-Code Engine Interface" (docs/screenshot.png)
+
+Paste Python code, run analysis, and receive a structured reasoning and security report without executing the program.
+---
 static application security analyzer (SAST) for Python web applications.
 Meta-Code Engine
 
