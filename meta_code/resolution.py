@@ -69,4 +69,3 @@ class ResolutionPredictor:
                 'convergence': issue in previous_issues,
             })
         return predictions
-
