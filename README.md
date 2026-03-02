@@ -6,9 +6,10 @@ Meta-Code Engine
  [![Live Demo](https://img.shields.io/badge/Live-Demo-brightgreen)](https://a4c29939-30b5-4781-a821-3fa22ad8393d-00-1tg0ttwlolf5b.worf.replit.dev/)
 
 ""Launch Meta-Code-Engine"    !Live App¡
-Screenshot
+🐍🐍🐍🐍🐍🐍🐍🐍🐍🐍🐍🐍🐍
 
-"Meta-Code Engine Interface" (docs/screenshot.png)
+ 🖥️Screenshot💉
+![Screenshot](https://github.com/KnottNefarious/meta-code-engine/raw/main/pictures/Assets/Screenshot_20260301-195203~2.png)
 
 Paste Python code, run analysis, and receive a structured reasoning and security report without executing the program.
 ---
@@ -18,7 +19,7 @@ Meta-Code Engine
 Meta-Code Engine is an experimental program analysis tool that examines Python source code and produces a structured reasoning report describing how the code behaves.
 
 Instead of only checking style or syntax like a linter, Meta-Code Engine attempts to interpret the logic and intent of a program.
-
+---
 Quick Example
 
 Paste Python code:
@@ -53,6 +54,8 @@ Risk Notes
 - Assumes comparable values
 
 You are not reading code anymore — you are reading an explanation.
+
+---
 
 It answers questions such as:
 
