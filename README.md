@@ -1,5 +1,9 @@
- 
-🐍Meta-Code Engine🐍
+# 🐍 Meta-Code Engine 🐍
+
+**Topics / Keywords:**  
+`python` · `static-analysis` · `sast` · `security` · `ast` · `code-analysis` · `flask` · `vulnerability-detection` · `program-analysis` · `code-review`
+
+> **GitHub Discoverability:** GitHub organizes repositories by **Topics** — keyword tags you set in your repository's Settings page (or via the ⚙️ gear icon next to *About* on the repo home page). When someone searches GitHub for a keyword like `sast` or `static-analysis`, repositories tagged with those topics appear on the matching topic page (e.g. `github.com/topics/sast`). Add the topics above to this repository so it surfaces in the right keyword searches.
 
 ---
  👉  Live App will be available if i get more stars ⭐⭐⭐⭐⭐
