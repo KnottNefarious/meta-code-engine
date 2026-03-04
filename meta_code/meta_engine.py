@@ -15,6 +15,15 @@ import ast
 # ---------------------------------------------------------------------------
 
 SQL_METHODS        = {"execute", "executemany"}
+
+# Variable names that strongly suggest a database cursor/connection.
+# .execute() is only flagged as SQL Injection when the receiver matches one of these,
+# preventing false positives on objects like HarmonicExecutor, SQLAlchemy Engine, etc.
+DB_CURSOR_NAMES = {
+    "cursor", "cur", "c", "curs",
+    "conn", "connection", "db", "database",
+    "session", "sess", "con",
+}
 REQUEST_CONTAINERS = {"args", "form", "json", "values", "headers", "cookies", "data"}
 HTML_KEYWORDS      = {"<html", "<div", "<script", "<h1", "<body", "<span"}
 SANITIZERS         = {"escape"}                               # markupsafe.escape
@@ -219,16 +228,24 @@ class SymbolicAnalyzer:
                         return sym
 
                 # ---- SQL Injection: cursor.execute(tainted) -----------------
+                # Only flag when the calling object looks like a DB cursor/connection,
+                # not arbitrary objects with an .execute() method (e.g. HarmonicExecutor).
                 if method in SQL_METHODS and node.args:
-                    arg = self.eval(node.args[0])
-                    if isinstance(arg, SymbolicValue) and arg.tainted:
-                        self._add_finding(
-                            "SQL Injection", "HIGH", arg,
-                            f"cursor.{method}(query)",
-                            "User input concatenated into SQL query",
-                            "Use parameterized queries: cursor.execute(sql, (param,))",
-                            node,
-                        )
+                    obj_name = obj.id if isinstance(obj, ast.Name) else None
+                    is_db_cursor = (
+                        obj_name in DB_CURSOR_NAMES
+                        or isinstance(obj, ast.Attribute)  # e.g. db.cursor().execute()
+                    )
+                    if is_db_cursor:
+                        arg = self.eval(node.args[0])
+                        if isinstance(arg, SymbolicValue) and arg.tainted:
+                            self._add_finding(
+                                "SQL Injection", "HIGH", arg,
+                                f"{obj_name or 'cursor'}.{method}(query)",
+                                "User input concatenated into SQL query",
+                                "Use parameterized queries: cursor.execute(sql, (param,))",
+                                node,
+                            )
 
                 # ---- Command Injection: os.system / os.popen ----------------
                 if (isinstance(obj, ast.Name) and obj.id == "os"
