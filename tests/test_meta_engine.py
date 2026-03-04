@@ -1583,6 +1583,226 @@ class TestMethodChainSinks(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# 29b. REAL-WORLD SYNTAX PATTERNS (found via stress testing)
+# ---------------------------------------------------------------------------
+
+class TestFStrings(unittest.TestCase):
+    """f-string taint propagation — JoinedStr AST nodes."""
+
+    def test_fstring_sql_injection(self):
+        code = 'uid = request.args.get("id")\ncursor.execute(f"SELECT * FROM users WHERE id={uid}")'
+        self.assertIn("SQL Injection", _vuln_types(code))
+
+    def test_fstring_xss_return(self):
+        code = 'name = request.args.get("name")\nreturn f"<h1>Hello {name}</h1>"'
+        self.assertIn("Cross-Site Scripting (XSS)", _vuln_types(code))
+
+    def test_fstring_ssrf(self):
+        code = 'host = request.args.get("h")\nrequests.get(f"http://{host}/api")'
+        self.assertIn("Server-Side Request Forgery (SSRF)", _vuln_types(code))
+
+    def test_fstring_command_injection(self):
+        code = 'cmd = request.args.get("cmd")\nos.system(f"echo {cmd}")'
+        self.assertIn("Command Injection", _vuln_types(code))
+
+    def test_fstring_constant_not_flagged(self):
+        code = 'cursor.execute(f"SELECT * FROM users WHERE id=1")'
+        self.assertNotIn("SQL Injection", _vuln_types(code))
+
+    def test_fstring_multiple_tainted_parts(self):
+        code = (
+            'a = request.args.get("a")\n'
+            'b = request.args.get("b")\n'
+            'cursor.execute(f"SELECT * FROM t WHERE x={a} AND y={b}")\n'
+        )
+        self.assertIn("SQL Injection", _vuln_types(code))
+
+    def test_fstring_mixed_safe_tainted(self):
+        code = (
+            'uid = request.args.get("id")\n'
+            'query = f"SELECT * FROM users WHERE id={uid} LIMIT 10"\n'
+            'cursor.execute(query)\n'
+        )
+        self.assertIn("SQL Injection", _vuln_types(code))
+
+
+class TestWalrusOperator(unittest.TestCase):
+    """Walrus operator := as assignment in if conditions."""
+
+    def test_walrus_sql_injection(self):
+        code = (
+            'if (uid := request.args.get("id")):\n'
+            '    cursor.execute("SELECT * WHERE id=" + uid)\n'
+        )
+        self.assertIn("SQL Injection", _vuln_types(code))
+
+    def test_walrus_command_injection(self):
+        code = (
+            'if (cmd := request.args.get("cmd")):\n'
+            '    os.system(cmd)\n'
+        )
+        self.assertIn("Command Injection", _vuln_types(code))
+
+    def test_walrus_no_crash_clean_code(self):
+        code = 'if (val := some_function()):\n    print(val)\n'
+        engine = MetaCodeEngine()
+        report = engine.orchestrate(code)
+        self.assertIsInstance(report, AnalysisReport)
+
+
+class TestAsyncDef(unittest.TestCase):
+    """async def functions scanned identically to sync def."""
+
+    def test_async_def_sql_injection(self):
+        code = (
+            'async def get_user():\n'
+            '    uid = request.args.get("id")\n'
+            '    cursor.execute(uid)\n'
+        )
+        self.assertIn("SQL Injection", _vuln_types(code))
+
+    def test_async_def_command_injection(self):
+        code = (
+            'async def run_cmd():\n'
+            '    cmd = request.args.get("cmd")\n'
+            '    os.system(cmd)\n'
+        )
+        self.assertIn("Command Injection", _vuln_types(code))
+
+    def test_async_def_ssrf(self):
+        code = (
+            'async def proxy():\n'
+            '    url = request.args.get("url")\n'
+            '    requests.get(url)\n'
+        )
+        self.assertIn("Server-Side Request Forgery (SSRF)", _vuln_types(code))
+
+    def test_async_def_clean_not_flagged(self):
+        code = 'async def safe():\n    return "hello world"\n'
+        self.assertEqual(_analyze(code), [])
+
+    def test_async_def_xss(self):
+        code = (
+            'async def search():\n'
+            '    q = request.args.get("q")\n'
+            '    return "<h1>" + q\n'
+        )
+        self.assertIn("Cross-Site Scripting (XSS)", _vuln_types(code))
+
+
+class TestClassBasedViews(unittest.TestCase):
+    """Class method bodies are scanned for taint flows."""
+
+    def test_class_method_sql_injection(self):
+        code = (
+            'class UserView(View):\n'
+            '    def dispatch_request(self):\n'
+            '        uid = request.args.get("id")\n'
+            '        cursor.execute("SELECT * FROM users WHERE id=" + uid)\n'
+        )
+        self.assertIn("SQL Injection", _vuln_types(code))
+
+    def test_class_method_command_injection(self):
+        code = (
+            'class AdminView(View):\n'
+            '    def dispatch_request(self):\n'
+            '        cmd = request.args.get("cmd")\n'
+            '        os.system(cmd)\n'
+        )
+        self.assertIn("Command Injection", _vuln_types(code))
+
+    def test_class_method_xss(self):
+        code = (
+            'class SearchView(View):\n'
+            '    def get(self):\n'
+            '        q = request.args.get("q")\n'
+            '        return "<h1>" + q\n'
+        )
+        self.assertIn("Cross-Site Scripting (XSS)", _vuln_types(code))
+
+    def test_class_method_path_traversal(self):
+        code = (
+            'class FileView(View):\n'
+            '    def get(self):\n'
+            '        path = request.args.get("file")\n'
+            '        return open(path).read()\n'
+        )
+        self.assertIn("Path Traversal", _vuln_types(code))
+
+    def test_class_safe_method_not_flagged(self):
+        code = 'class HealthView(View):\n    def get(self):\n        return "ok"\n'
+        self.assertEqual(_analyze(code), [])
+
+    def test_class_multiple_methods_both_scanned(self):
+        code = (
+            'class MultiView(View):\n'
+            '    def get(self):\n'
+            '        uid = request.args.get("id")\n'
+            '        cursor.execute(uid)\n'
+            '    def post(self):\n'
+            '        cmd = request.args.get("cmd")\n'
+            '        os.system(cmd)\n'
+        )
+        types = _vuln_types(code)
+        self.assertIn("SQL Injection", types)
+        self.assertIn("Command Injection", types)
+
+
+class TestLargeHtmlAndRealWorldStructure(unittest.TestCase):
+    """Engine handles large files, inline HTML blobs, decorators without crashing."""
+
+    def test_large_inline_html_no_crash(self):
+        big_html = "<div>" * 200 + "CONTENT" + "</div>" * 200
+        code = f'def page():\n    name = request.args.get("name")\n    return """{big_html}""" + name'
+        engine = MetaCodeEngine()
+        report = engine.orchestrate(code)
+        self.assertIsInstance(report, AnalysisReport)
+
+    def test_heavily_decorated_function_no_crash(self):
+        code = (
+            '@app.route("/user")\n'
+            '@login_required\n'
+            '@cache(timeout=300)\n'
+            'def get_user():\n'
+            '    uid = request.args.get("id")\n'
+            '    cursor.execute(uid)\n'
+        )
+        engine = MetaCodeEngine()
+        report = engine.orchestrate(code)
+        self.assertIsInstance(report, AnalysisReport)
+
+    def test_type_annotations_no_crash(self):
+        code = (
+            'def get_user(user_id: str) -> dict:\n'
+            '    result: dict = {}\n'
+            '    uid: str = request.args.get("id")\n'
+            '    cursor.execute(uid)\n'
+            '    return result\n'
+        )
+        engine = MetaCodeEngine()
+        report = engine.orchestrate(code)
+        self.assertIsInstance(report, AnalysisReport)
+
+    def test_unicode_strings_no_crash(self):
+        code = 'name = request.args.get("name")\nreturn "<h1>こんにちは " + name + "</h1>"'
+        engine = MetaCodeEngine()
+        report = engine.orchestrate(code)
+        self.assertIsInstance(report, AnalysisReport)
+
+    def test_multiline_string_sql_no_crash(self):
+        code = (
+            'uid = request.args.get("id")\n'
+            'query = (\n'
+            '    "SELECT u.id, u.name "\n'
+            '    "FROM users u "\n'
+            '    "WHERE u.id = " + uid\n'
+            ')\n'
+            'cursor.execute(query)\n'
+        )
+        self.assertIn("SQL Injection", _vuln_types(code))
+
+
+# ---------------------------------------------------------------------------
 # 30. FULL REAL-WORLD FLASK APP INTEGRATION
 # ---------------------------------------------------------------------------
 
