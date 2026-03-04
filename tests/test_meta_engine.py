@@ -1397,6 +1397,304 @@ class TestEdgeCases(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# 29. REAL-WORLD TAINT SOURCE GAPS (found via live testing)
+# ---------------------------------------------------------------------------
+
+class TestRequestGetJson(unittest.TestCase):
+    """request.get_json() as a taint source — previously untracked."""
+
+    def test_get_json_is_tainted(self):
+        code = "data = request.get_json()\ncursor.execute(data)"
+        self.assertIn("SQL Injection", _vuln_types(code))
+
+    def test_get_json_dict_get_propagates_taint(self):
+        """data = request.get_json() → url = data.get('url') → SSRF"""
+        code = (
+            "data = request.get_json()\n"
+            "url = data.get('callback_url')\n"
+            "requests.post(url)\n"
+        )
+        self.assertIn("Server-Side Request Forgery (SSRF)", _vuln_types(code))
+
+    def test_get_json_dict_get_sql(self):
+        code = (
+            "data = request.get_json()\n"
+            "uid = data.get('id')\n"
+            "cursor.execute(uid)\n"
+        )
+        self.assertIn("SQL Injection", _vuln_types(code))
+
+    def test_get_json_dict_get_command_injection(self):
+        code = (
+            "data = request.get_json()\n"
+            "cmd = data.get('cmd')\n"
+            "os.system(cmd)\n"
+        )
+        self.assertIn("Command Injection", _vuln_types(code))
+
+    def test_get_json_dict_get_deserialization(self):
+        code = (
+            "data = request.get_json()\n"
+            "blob = data.get('payload')\n"
+            "pickle.loads(blob)\n"
+        )
+        self.assertIn("Unsafe Deserialization", _vuln_types(code))
+
+    def test_get_data_is_tainted(self):
+        """request.get_data() should also be a taint source."""
+        code = "raw = request.get_data()\nyaml.load(raw)"
+        self.assertIn("Unsafe Deserialization", _vuln_types(code))
+
+    def test_clean_constant_dict_get_not_flagged(self):
+        config = {'url': 'https://safe.example.com'}
+        code = "url = config.get('url')\nrequests.get(url)"
+        # config is a local constant dict — not tainted
+        self.assertNotIn("Server-Side Request Forgery (SSRF)", _vuln_types(code))
+
+
+class TestRequestDirectAttributeAccess(unittest.TestCase):
+    """request.data, request.args etc. accessed directly as attributes."""
+
+    def test_request_data_attribute_is_tainted(self):
+        code = "raw = request.data\nyaml.load(raw)"
+        self.assertIn("Unsafe Deserialization", _vuln_types(code))
+
+    def test_request_data_pickle(self):
+        code = "raw = request.data\npickle.loads(raw)"
+        self.assertIn("Unsafe Deserialization", _vuln_types(code))
+
+    def test_request_data_sql(self):
+        code = "raw = request.data\ncursor.execute(raw)"
+        self.assertIn("SQL Injection", _vuln_types(code))
+
+    def test_request_files_attribute_is_tainted(self):
+        code = "f = request.files\ncursor.execute(f)"
+        self.assertIn("SQL Injection", _vuln_types(code))
+
+
+class TestBinOpTaintPreservation(unittest.TestCase):
+    """constant + tainted — taint must survive even when left operand is a constant."""
+
+    def test_constant_plus_tainted_path_traversal(self):
+        """open('/base/' + user_input) — left is safe string, right is tainted."""
+        code = (
+            "filename = request.args.get('file')\n"
+            "base = '/var/www/files/'\n"
+            "return open(base + filename).read()\n"
+        )
+        self.assertIn("Path Traversal", _vuln_types(code))
+
+    def test_tainted_plus_constant_sql(self):
+        """'SELECT * WHERE id=' + uid — taint on left."""
+        code = (
+            "uid = request.args.get('id')\n"
+            "sql = 'SELECT * FROM users WHERE id=' + uid\n"
+            "cursor.execute(sql)\n"
+        )
+        self.assertIn("SQL Injection", _vuln_types(code))
+
+    def test_constant_plus_tainted_xss(self):
+        """'<h1>' + name — constant HTML prefix + tainted value."""
+        code = (
+            "name = request.args.get('name')\n"
+            "return '<h1>Hello ' + name + '</h1>'\n"
+        )
+        self.assertIn("Cross-Site Scripting (XSS)", _vuln_types(code))
+
+    def test_constant_plus_tainted_command(self):
+        """'ping -c 1 ' + host — classic command injection setup."""
+        code = (
+            "host = request.args.get('host')\n"
+            "cmd = 'ping -c 1 ' + host\n"
+            "subprocess.check_output(cmd, shell=True)\n"
+        )
+        self.assertIn("Command Injection", _vuln_types(code))
+
+    def test_tainted_binop_through_multiple_steps(self):
+        """Taint survives two concatenations before reaching sink."""
+        code = (
+            "raw = request.args.get('q')\n"
+            "prefix = 'SELECT * FROM t WHERE name='\n"
+            "suffix = ' LIMIT 10'\n"
+            "sql = prefix + raw + suffix\n"
+            "cursor.execute(sql)\n"
+        )
+        self.assertIn("SQL Injection", _vuln_types(code))
+
+
+class TestRenderTemplateSink(unittest.TestCase):
+    """render_template_string with tainted content — XSS sink."""
+
+    def test_render_template_string_tainted(self):
+        code = (
+            "q = request.args.get('q')\n"
+            "return render_template_string('<h1>Results for: ' + q + '</h1>')\n"
+        )
+        self.assertIn("Cross-Site Scripting (XSS)", _vuln_types(code))
+
+    def test_render_template_string_direct_taint(self):
+        """Tainted value passed directly as the template string."""
+        code = (
+            "tmpl = request.args.get('template')\n"
+            "return render_template_string(tmpl)\n"
+        )
+        self.assertIn("Cross-Site Scripting (XSS)", _vuln_types(code))
+
+    def test_render_template_string_constant_not_flagged(self):
+        code = "return render_template_string('<h1>Hello World</h1>')"
+        self.assertNotIn("Cross-Site Scripting (XSS)", _vuln_types(code))
+
+    def test_render_template_string_severity_high(self):
+        code = (
+            "q = request.args.get('q')\n"
+            "return render_template_string('<p>' + q + '</p>')\n"
+        )
+        findings = _analyze(code)
+        xss = [f for f in findings if f.vuln_type == "Cross-Site Scripting (XSS)"]
+        self.assertTrue(xss)
+        self.assertEqual(xss[0].severity, "HIGH")
+
+
+class TestMethodChainSinks(unittest.TestCase):
+    """Sink detection through method chains — open(path).read() etc."""
+
+    def test_open_read_chain_path_traversal(self):
+        """open(tainted).read() — sink fires on open() inside the chain."""
+        code = (
+            "filename = request.args.get('file')\n"
+            "content = open(filename).read()\n"
+        )
+        self.assertIn("Path Traversal", _vuln_types(code))
+
+    def test_open_readlines_chain_path_traversal(self):
+        code = (
+            "filename = request.args.get('file')\n"
+            "lines = open(filename).readlines()\n"
+        )
+        self.assertIn("Path Traversal", _vuln_types(code))
+
+    def test_open_base_plus_filename_chain(self):
+        """open('/base/' + tainted).read() — taint through BinOp + chain."""
+        code = (
+            "filename = request.args.get('file')\n"
+            "data = open('/var/www/' + filename).read()\n"
+        )
+        self.assertIn("Path Traversal", _vuln_types(code))
+
+
+# ---------------------------------------------------------------------------
+# 30. FULL REAL-WORLD FLASK APP INTEGRATION
+# ---------------------------------------------------------------------------
+
+class TestRealWorldFlaskApp(unittest.TestCase):
+    """Integration test against a realistic multi-endpoint Flask app."""
+
+    VULNERABLE_APP = """
+from flask import Flask, request, jsonify, redirect, render_template_string
+import sqlite3, subprocess, os, pickle, requests, yaml
+
+app = Flask(__name__)
+
+@app.route("/user")
+def get_user():
+    user_id = request.args.get("id")
+    conn = sqlite3.connect("app.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE id=" + user_id)
+    return jsonify(cursor.fetchone())
+
+@app.route("/search")
+def search():
+    q = request.args.get("q", "")
+    return render_template_string("<h1>Results for: " + q + "</h1>")
+
+@app.route("/download")
+def download():
+    filename = request.args.get("file")
+    base = "/var/www/files/"
+    return open(base + filename).read()
+
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    data = request.get_json()
+    url = data.get("callback_url")
+    result = requests.post(url, json={"status": "ok"})
+    return jsonify(result.json())
+
+@app.route("/config", methods=["POST"])
+def load_config():
+    raw = request.data
+    config = yaml.load(raw)
+    return jsonify(config)
+
+@app.route("/admin/ping")
+def ping():
+    host = request.args.get("host")
+    output = subprocess.check_output("ping -c 1 " + host, shell=True)
+    return output
+
+@app.route("/login")
+def login():
+    next_page = request.args.get("next", "/dashboard")
+    return redirect(next_page)
+
+@app.route("/safe_user")
+def safe_user():
+    user_id = request.args.get("id")
+    conn = sqlite3.connect("app.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE id=?", (user_id,))
+    return jsonify(cursor.fetchone())
+
+@app.route("/safe_ping")
+def safe_ping():
+    host = request.args.get("host", "localhost")
+    output = subprocess.check_output(["ping", "-c", "1", host])
+    return output
+"""
+
+    def setUp(self):
+        self.engine = MetaCodeEngine()
+        self.report = self.engine.orchestrate(self.VULNERABLE_APP)
+        self.vuln_text = "\n".join(self.report.issues)
+
+    def test_detects_sql_injection(self):
+        self.assertIn("SQL Injection", self.vuln_text)
+
+    def test_detects_xss_via_render_template_string(self):
+        self.assertIn("Cross-Site Scripting (XSS)", self.vuln_text)
+
+    def test_detects_path_traversal(self):
+        self.assertIn("Path Traversal", self.vuln_text)
+
+    def test_detects_ssrf_via_get_json(self):
+        self.assertIn("Server-Side Request Forgery (SSRF)", self.vuln_text)
+
+    def test_detects_unsafe_deserialization_via_request_data(self):
+        self.assertIn("Unsafe Deserialization", self.vuln_text)
+
+    def test_detects_command_injection(self):
+        self.assertIn("Command Injection", self.vuln_text)
+
+    def test_detects_open_redirect(self):
+        self.assertIn("Open Redirect", self.vuln_text)
+
+    def test_finds_all_seven_vulns(self):
+        self.assertEqual(len(self.report.issues), 7)
+
+    def test_safe_parameterized_query_not_flagged(self):
+        """The safe_user route uses ? placeholders — must not be flagged."""
+        sql_issues = [i for i in self.report.issues if "SQL Injection" in i]
+        # Only one SQL injection — not two (the safe route must be clean)
+        self.assertEqual(len(sql_issues), 1)
+
+    def test_safe_subprocess_list_not_flagged(self):
+        """safe_ping uses a list arg without shell=True — must not be flagged."""
+        cmd_issues = [i for i in self.report.issues if "Command Injection" in i]
+        self.assertEqual(len(cmd_issues), 1)
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
