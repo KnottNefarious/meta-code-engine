@@ -434,6 +434,24 @@ class SymbolicAnalyzer:
                 return right
             return None
 
+        # f-string  — JoinedStr containing FormattedValue nodes
+        # e.g.  f"SELECT * WHERE id={uid}"  or  f"<h1>Hello {name}</h1>"
+        if isinstance(node, ast.JoinedStr):
+            tainted_parts = []
+            for part in node.values:
+                if isinstance(part, ast.FormattedValue):
+                    val = self.eval(part.value)
+                    if isinstance(val, SymbolicValue) and val.tainted:
+                        tainted_parts.append(val)
+            if tainted_parts:
+                # Merge all tainted parts into one representative value
+                result = tainted_parts[0]
+                for extra in tainted_parts[1:]:
+                    result = result.merge(extra)
+                result.add("fstring")
+                return result
+            return None
+
         return None
 
     # ------------------------------------------------------------------
@@ -486,9 +504,17 @@ class SymbolicAnalyzer:
                         )
 
             # Function definition — register for inter-procedural tracking
-            elif isinstance(stmt, ast.FunctionDef):
+            # AsyncFunctionDef handled identically (Flask 2.x / Quart)
+            elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 self.functions[stmt.name] = stmt
                 self.execute_block(stmt.body)
+
+            # Class definition — scan all method bodies
+            elif isinstance(stmt, ast.ClassDef):
+                for item in stmt.body:
+                    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        self.functions[item.name] = item
+                        self.execute_block(item.body)
 
             # Bare expression — function calls like os.system(cmd)
             elif isinstance(stmt, ast.Expr):
@@ -505,8 +531,14 @@ class SymbolicAnalyzer:
                 else:
                     self.eval(call)
 
-            # If-statement — analyze both branches
+            # If-statement — analyze both branches (and walrus := in the test)
             elif isinstance(stmt, ast.If):
+                # Walrus operator in if condition: if (x := expr): ...
+                if isinstance(stmt.test, ast.NamedExpr):
+                    val = self.eval(stmt.test.value)
+                    if isinstance(val, SymbolicValue):
+                        val.add(stmt.test.target.id)
+                    self.symbols[stmt.test.target.id] = val
                 self.execute_block(stmt.body)
                 if stmt.orelse:
                     self.execute_block(stmt.orelse)
