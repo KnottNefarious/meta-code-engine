@@ -24,15 +24,22 @@ DB_CURSOR_NAMES = {
     "conn", "connection", "db", "database",
     "session", "sess", "con",
 }
-REQUEST_CONTAINERS = {"args", "form", "json", "values", "headers", "cookies", "data"}
-HTML_KEYWORDS      = {"<html", "<div", "<script", "<h1", "<body", "<span"}
-SANITIZERS         = {"escape"}                               # markupsafe.escape
+
+# Flask request containers — taint sources
+REQUEST_CONTAINERS  = {"args", "form", "json", "values", "headers", "cookies", "data", "files"}
+# Direct request methods that return attacker-controlled data
+REQUEST_METHODS     = {"get_json", "get_data"}
+# Direct request attributes (e.g. request.data, request.args) — plain attribute access
+REQUEST_ATTRIBUTES  = {"data", "args", "form", "json", "values", "headers", "cookies", "files"}
+
+HTML_KEYWORDS       = {"<html", "<div", "<script", "<h1", "<body", "<span", "<p", "<a "}
+SANITIZERS          = {"escape", "Markup"}                    # markupsafe
 
 # os.* command sinks
-OS_COMMAND_METHODS = {"system", "popen", "popen2", "popen3", "popen4"}
+OS_COMMAND_METHODS  = {"system", "popen", "popen2", "popen3", "popen4"}
 
-# subprocess.* command sinks (only dangerous when shell=True or first arg tainted)
-SUBPROCESS_METHODS = {"call", "run", "Popen", "check_call", "check_output"}
+# subprocess.* command sinks (only dangerous when shell=True)
+SUBPROCESS_METHODS  = {"call", "run", "Popen", "check_call", "check_output"}
 
 # pickle / yaml / marshal deserialization sinks
 DESERIALIZE_CONTAINERS = {"pickle", "yaml", "marshal"}
@@ -43,6 +50,12 @@ REQUESTS_METHODS = {"get", "post", "put", "patch", "delete", "request", "head", 
 
 # Flask redirect — open redirect
 REDIRECT_FUNCTIONS = {"redirect"}
+
+# Flask template rendering — XSS sink when passed tainted data directly
+TEMPLATE_RENDER_FUNCTIONS = {"render_template_string", "make_response", "Response"}
+
+# File open functions — path traversal
+FILE_OPEN_FUNCTIONS = {"open"}
 
 
 # ---------------------------------------------------------------------------
@@ -130,11 +143,11 @@ class SymbolicValue:
 class SymbolicAnalyzer:
 
     def __init__(self):
-        self.symbols      = {}           # variable name → SymbolicValue | literal
-        self.findings     = []
-        self._fingerprints = set()       # (vuln_type, lineno, sink) for dedup
-        self.counter      = 0
-        self.functions    = {}           # function name → ast.FunctionDef
+        self.symbols       = {}     # variable name → SymbolicValue | literal
+        self.findings      = []
+        self._fingerprints = set()  # (vuln_type, lineno, sink) for dedup
+        self.counter       = 0
+        self.functions     = {}     # function name → ast.FunctionDef
 
     # ------------------------------------------------------------------
     # Taint source factory
@@ -175,7 +188,7 @@ class SymbolicAnalyzer:
     # Expression evaluation — returns SymbolicValue | literal | None
     # ------------------------------------------------------------------
 
-    def eval(self, node):  # noqa: C901  (complexity is inherent to the pattern matching)
+    def eval(self, node):  # noqa: C901
         if node is None:
             return None
 
@@ -187,14 +200,32 @@ class SymbolicAnalyzer:
         if isinstance(node, ast.Name):
             return self.symbols.get(node.id)
 
+        # ── Direct attribute access: request.data, request.args, etc. ──
+        # This catches patterns like:  raw = request.data
+        if isinstance(node, ast.Attribute):
+            if (isinstance(node.value, ast.Name)
+                    and node.value.id == "request"
+                    and node.attr in REQUEST_ATTRIBUTES):
+                sym = self._new_tainted("request")
+                sym.add(node.attr)
+                return sym
+            # For chained attribute access, try to propagate taint from inner
+            inner = self.eval(node.value)
+            if isinstance(inner, SymbolicValue) and inner.tainted:
+                return inner
+            return None
+
         # Subscript  e.g.  documents[user_id]
         if isinstance(node, ast.Subscript):
             key = self.eval(node.slice)
             if isinstance(key, SymbolicValue) and key.tainted:
-                # Return a tainted value so callers can detect IDOR on return
                 sym = SymbolicValue(f"subscript_{self.counter}", tainted=True,
                                     path=list(key.path) + ["subscript_access"])
                 return sym
+            # Also check if the container itself is tainted (e.g. tainted_dict['key'])
+            container = self.eval(node.value)
+            if isinstance(container, SymbolicValue) and container.tainted:
+                return container
             return None
 
         # Function / method calls
@@ -212,7 +243,7 @@ class SymbolicAnalyzer:
                 if method in SANITIZERS:
                     return None
 
-                # ---- Taint source: request.<container>.get() ---------------
+                # ---- Taint source: request.<container>.get('key') ----------
                 if isinstance(obj, ast.Attribute) and obj.attr in REQUEST_CONTAINERS:
                     if isinstance(obj.value, ast.Name) and obj.value.id == "request":
                         sym = self._new_tainted("request")
@@ -220,21 +251,37 @@ class SymbolicAnalyzer:
                         sym.add(method)
                         return sym
 
-                # Also handle request.<container> directly (no .get)
+                # ---- Taint source: request.get_json(), request.get_data() --
+                if (isinstance(obj, ast.Name) and obj.id == "request"
+                        and method in REQUEST_METHODS):
+                    sym = self._new_tainted("request")
+                    sym.add(method)
+                    return sym
+
+                # ---- Taint source: request.<container> directly ------------
+                # e.g. request.form (no .get()) used as container,
+                # or request.args used directly
                 if isinstance(obj, ast.Name) and obj.id == "request":
                     if method in REQUEST_CONTAINERS:
                         sym = self._new_tainted("request")
                         sym.add(method)
                         return sym
 
+                # ---- Taint propagation: tainted_dict.get('key') ------------
+                # Covers:  data = request.get_json()  →  url = data.get('url')
+                if method in {"get", "values", "items", "keys"}:
+                    receiver = self.eval(obj)
+                    if isinstance(receiver, SymbolicValue) and receiver.tainted:
+                        sym = SymbolicValue(receiver.name, True, list(receiver.path))
+                        sym.add(method)
+                        return sym
+
                 # ---- SQL Injection: cursor.execute(tainted) -----------------
-                # Only flag when the calling object looks like a DB cursor/connection,
-                # not arbitrary objects with an .execute() method (e.g. HarmonicExecutor).
                 if method in SQL_METHODS and node.args:
-                    obj_name = obj.id if isinstance(obj, ast.Name) else None
+                    obj_name   = obj.id if isinstance(obj, ast.Name) else None
                     is_db_cursor = (
                         obj_name in DB_CURSOR_NAMES
-                        or isinstance(obj, ast.Attribute)  # e.g. db.cursor().execute()
+                        or isinstance(obj, ast.Attribute)  # db.cursor().execute()
                     )
                     if is_db_cursor:
                         arg = self.eval(node.args[0])
@@ -261,7 +308,7 @@ class SymbolicAnalyzer:
                                 node,
                             )
 
-                # ---- Command Injection: subprocess.*( ..., shell=True) ------
+                # ---- Command Injection: subprocess.*(..., shell=True) -------
                 if (isinstance(obj, ast.Name) and obj.id == "subprocess"
                         and method in SUBPROCESS_METHODS):
                     if node.args and self._has_shell_true(node):
@@ -293,8 +340,6 @@ class SymbolicAnalyzer:
                 # ---- SSRF: requests.<method>(tainted_url) ------------------
                 if (isinstance(obj, ast.Name) and obj.id == "requests"
                         and method in REQUESTS_METHODS):
-                    # requests.request('GET', url) — URL is 2nd arg
-                    # requests.get/post/put/... — URL is 1st arg
                     url_arg_index = 1 if method == "request" else 0
                     if len(node.args) > url_arg_index:
                         arg = self.eval(node.args[url_arg_index])
@@ -310,19 +355,27 @@ class SymbolicAnalyzer:
                                 node,
                             )
 
+                # ---- Recursive eval on receiver object ----------------------
+                # This ensures sink detections fire even in method chains like
+                # open(path).read() — the open() check fires when we eval the obj.
+                inner = self.eval(obj)
+                if isinstance(inner, SymbolicValue) and inner.tainted:
+                    return inner
+                return None
+
             # ----------------------------------------------------------------
-            # Bare function calls:  open(...), redirect(...), etc.
+            # Bare function calls:  open(...), redirect(...), render_template_string(...)
             # ----------------------------------------------------------------
             if isinstance(func, ast.Name):
                 name = func.id
 
                 # Path Traversal: open(tainted_path)
-                if name == "open" and node.args:
+                if name in FILE_OPEN_FUNCTIONS and node.args:
                     arg = self.eval(node.args[0])
                     if isinstance(arg, SymbolicValue) and arg.tainted:
                         self._add_finding(
                             "Path Traversal", "MEDIUM", arg,
-                            "open(path)",
+                            f"{name}(path)",
                             "User input used as a filesystem path — arbitrary file read possible",
                             "Validate the filename against an allowlist and resolve the real path",
                             node,
@@ -334,15 +387,27 @@ class SymbolicAnalyzer:
                     if isinstance(arg, SymbolicValue) and arg.tainted:
                         self._add_finding(
                             "Open Redirect", "MEDIUM", arg,
-                            "redirect(url)",
+                            f"{name}(url)",
                             "User-controlled URL passed to redirect — attacker can redirect victims off-site",
                             "Validate redirect URLs against a known-good allowlist or use url_for()",
                             node,
                         )
 
+                # XSS: render_template_string / make_response with tainted content
+                if name in TEMPLATE_RENDER_FUNCTIONS and node.args:
+                    arg = self.eval(node.args[0])
+                    if isinstance(arg, SymbolicValue) and arg.tainted:
+                        self._add_finding(
+                            "Cross-Site Scripting (XSS)", "HIGH", arg,
+                            f"{name}(template)",
+                            f"User input passed directly to {name} — template injection possible",
+                            "Never concatenate user input into templates; use template variables with auto-escaping",
+                            node,
+                        )
+
                 # Forbidden call guard (exec/eval/compile/__import__)
                 if name in {"exec", "eval", "compile", "__import__"}:
-                    return None  # don't propagate taint through these
+                    return None
 
             return None
 
@@ -362,7 +427,12 @@ class SymbolicAnalyzer:
 
             if isinstance(left, SymbolicValue) and isinstance(right, SymbolicValue):
                 return left.merge(right)
-            return left if isinstance(left, SymbolicValue) else right
+            # Return whichever side is a SymbolicValue (handles constant + tainted)
+            if isinstance(left, SymbolicValue):
+                return left
+            if isinstance(right, SymbolicValue):
+                return right
+            return None
 
         return None
 
@@ -398,7 +468,6 @@ class SymbolicAnalyzer:
             elif isinstance(stmt, ast.Return):
                 val = self.eval(stmt.value)
                 if isinstance(val, SymbolicValue) and val.tainted:
-                    # IDOR: tainted subscript access returned
                     if "subscript_access" in val.path:
                         self._add_finding(
                             "Insecure Direct Object Reference (IDOR)", "HIGH", val,
@@ -408,7 +477,6 @@ class SymbolicAnalyzer:
                             stmt,
                         )
                     else:
-                        # XSS: tainted value returned as HTTP response
                         self._add_finding(
                             "Cross-Site Scripting (XSS)", "HIGH", val,
                             "HTTP response",
@@ -420,13 +488,11 @@ class SymbolicAnalyzer:
             # Function definition — register for inter-procedural tracking
             elif isinstance(stmt, ast.FunctionDef):
                 self.functions[stmt.name] = stmt
-                # Also recurse to register nested functions
                 self.execute_block(stmt.body)
 
-            # Bare expression — includes function calls like os.system(cmd)
+            # Bare expression — function calls like os.system(cmd)
             elif isinstance(stmt, ast.Expr):
                 call = stmt.value
-                # Inline call that is a tracked user-defined function
                 if (isinstance(call, ast.Call)
                         and isinstance(call.func, ast.Name)
                         and call.func.id in self.functions):
@@ -437,7 +503,6 @@ class SymbolicAnalyzer:
                     self.execute_block(func.body)
                     self.symbols = saved
                 else:
-                    # Evaluate to trigger any sink detections inside eval()
                     self.eval(call)
 
             # If-statement — analyze both branches
