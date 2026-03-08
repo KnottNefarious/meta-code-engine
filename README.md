@@ -1,4 +1,4 @@
-# 🐍 Meta-Code Engine 🐍
+#🐍 Meta-Code Engine 🐍
 
 ---
 
@@ -7,7 +7,7 @@
 
 "Launch Meta-Code-Engine" !Live App¡
 
-🖥️ Screenshot
+🖥️ Screenshot 💉
 
 ![Screenshot](https://github.com/KnottNefarious/meta-code-engine/raw/main/pictures/Assets/Screenshot_20260301-195203~2.png)
 
